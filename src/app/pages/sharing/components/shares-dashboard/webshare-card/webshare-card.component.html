@@ -18,6 +18,17 @@
     </div>
 
     <div class="actions">
+      @if (isServiceRunning$ | async) {
+        <button
+          mat-button
+          [ixTest]="['webshare', 'open']"
+          [attr.aria-label]="'Open WebShare' | translate"
+          (click)="openWebShare()"
+        >
+          {{ 'Open WebShare' | translate }}
+        </button>
+      }
+
       <button
         *ixRequiresRoles="requiredRoles"
         mat-button

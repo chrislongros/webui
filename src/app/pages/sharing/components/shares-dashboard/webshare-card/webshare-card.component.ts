@@ -1,6 +1,6 @@
 import { AsyncPipe } from '@angular/common';
 import {
-  ChangeDetectionStrategy, Component, OnInit,
+  ChangeDetectionStrategy, Component, Inject, OnInit,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { MatCard } from '@angular/material/card';
@@ -16,6 +16,8 @@ import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-r
 import { EmptyType } from 'app/enums/empty-type.enum';
 import { Role } from 'app/enums/role.enum';
 import { ServiceName } from 'app/enums/service-name.enum';
+import { ServiceStatus } from 'app/enums/service-status.enum';
+import { WINDOW } from 'app/helpers/window.helper';
 import { EmptyConfig } from 'app/interfaces/empty-config.interface';
 import { TruenasConnectConfig } from 'app/interfaces/truenas-connect-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
@@ -82,6 +84,10 @@ export class WebShareCardComponent implements OnInit {
   service$ = this.store$.select(selectService(ServiceName.WebShare));
   protected dataProvider: AsyncDataProvider<WebShareTableRow>;
 
+  isServiceRunning$ = this.service$.pipe(
+    map((service) => service?.state === ServiceStatus.Running),
+  );
+
   hasValidLicense$ = combineLatest([
     this.store$.pipe(
       waitForSystemInfo,
@@ -143,6 +149,7 @@ export class WebShareCardComponent implements OnInit {
     private snackbar: SnackbarService,
     protected emptyService: EmptyService,
     private store$: Store<AppState>,
+    @Inject(WINDOW) private window: Window,
   ) {}
 
   ngOnInit(): void {
@@ -180,6 +187,11 @@ export class WebShareCardComponent implements OnInit {
           this.dataProvider.load();
         });
     });
+  }
+
+  openWebShare(): void {
+    const currentUrl = this.window.location.origin;
+    this.window.open(`${currentUrl}/webshare/`, '_blank');
   }
 
   protected doEdit(row: WebShareTableRow): void {
