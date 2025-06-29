@@ -751,6 +751,7 @@
   "Once generated, one time-password is only valid for one login within 24 hours and does not persist across reboots. User will be required to set new password after they log in.<br><br> Do you want to continue?": "",
   "One-Time Password": "",
   "Only allow: {activities}": "",
+  "Open WebShare": "",
   "OpenStack Swift": "",
   "Operating System": "",
   "or": "",
