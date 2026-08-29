@@ -140,7 +140,6 @@ describe('PoolManagerComponent – create pool', () => {
         }),
         mockCall('enclosure2.query', [] as Enclosure[]),
         mockCall('pool.query', []),
-        mockCall('pool.dataset.encryption_algorithm_choices', {}),
         mockJob('pool.create', fakeSuccessfulJob()),
       ]),
       mockProvider(PoolWizardNameValidationService, {
@@ -192,7 +191,7 @@ describe('PoolManagerComponent – create pool', () => {
       Width: '1',
     });
 
-    // Metadata
+    // Special
     await wizard.clickNext();
     await wizard.fillStep({
       Layout: 'Stripe',
@@ -210,6 +209,9 @@ describe('PoolManagerComponent – create pool', () => {
       'Number of VDEVs': '1',
     });
 
+    // Review (tn-stepper renders only the active step, so navigate to it)
+    await wizard.goToStep('Review');
+
     const reviewView = await wizard.getReviewWizardStep();
     expect(await reviewView.getConfigurationItems()).toEqual({
       Cache: '1 × 20 GiB (HDD)',
@@ -217,7 +219,7 @@ describe('PoolManagerComponent – create pool', () => {
       Dedup: '1 × STRIPE | 1 × 20 GiB (HDD)',
       Log: '1 × STRIPE | 1 × 20 GiB (HDD)',
       Spare: '1 × 20 GiB (HDD)',
-      Metadata: '1 × STRIPE | 1 × 20 GiB (HDD)',
+      Special: '1 × STRIPE | 1 × 20 GiB (HDD)',
     });
     expect(await reviewView.getWarnings()).toEqual([
       'A stripe log VDEV may result in data loss if it fails combined with a power outage.',
@@ -322,7 +324,6 @@ describe('PoolManagerComponent – create pool with SED encryption', () => {
           mockCall('disk.details', { used: [], unused: sedDisks }),
           mockCall('enclosure2.query', []),
           mockCall('pool.query', []),
-          mockCall('pool.dataset.encryption_algorithm_choices', {}),
           mockCall('system.advanced.sed_global_password_is_set', false),
           mockCall('system.advanced.update', {} as AdvancedConfig),
           mockJob('pool.create', fakeSuccessfulJob()),
@@ -378,7 +379,6 @@ describe('PoolManagerComponent – create pool with SED encryption', () => {
           mockCall('disk.details', { used: [], unused: sedDisks }),
           mockCall('enclosure2.query', []),
           mockCall('pool.query', []),
-          mockCall('pool.dataset.encryption_algorithm_choices', {}),
           mockCall('system.advanced.sed_global_password_is_set', true),
           mockCall('system.advanced.update', {} as AdvancedConfig),
           mockJob('pool.create', fakeSuccessfulJob()),
@@ -422,7 +422,6 @@ describe('PoolManagerComponent – create pool with SED encryption', () => {
           mockCall('disk.details', { used: [], unused: sedDisks }),
           mockCall('enclosure2.query', []),
           mockCall('pool.query', []),
-          mockCall('pool.dataset.encryption_algorithm_choices', {}),
           mockCall('system.advanced.sed_global_password_is_set', false),
           mockJob('pool.create', fakeSuccessfulJob()),
         ]),
@@ -476,7 +475,6 @@ describe('PoolManagerComponent – create pool with SED encryption', () => {
           mockCall('disk.details', { used: [], unused: nonSedDisks }),
           mockCall('enclosure2.query', []),
           mockCall('pool.query', []),
-          mockCall('pool.dataset.encryption_algorithm_choices', {}),
           mockCall('system.advanced.sed_global_password_is_set', false),
           mockJob('pool.create', fakeSuccessfulJob()),
         ]),

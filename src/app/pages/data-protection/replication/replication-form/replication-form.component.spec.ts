@@ -1,8 +1,5 @@
-import { HarnessLoader } from '@angular/cdk/testing';
-import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { fakeAsync, tick } from '@angular/core/testing';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
 import { MockComponents, MockInstance } from 'ng-mocks';
 import { of } from 'rxjs';
@@ -19,7 +16,8 @@ import { helptextReplicationWizard } from 'app/helptext/data-protection/replicat
 import { KeychainCredential } from 'app/interfaces/keychain-credential.interface';
 import { ReplicationTask } from 'app/interfaces/replication-task.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { ixFormTestingProviders } from 'app/modules/forms/ix-forms/testing/ix-form-testing.helpers';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
@@ -81,16 +79,9 @@ const existingTask: ReplicationTask = {
 
 describe('ReplicationFormComponent', () => {
   let spectator: Spectator<ReplicationFormComponent>;
-  let loader: HarnessLoader;
+  let closedSpy: jest.SpyInstance;
   const remoteNodeProvider = jest.fn();
   const localNodeProvider = jest.fn();
-  const slideInRef: SlideInRef<ReplicationTask | undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    swap: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
-
   const generalForm = new FormGroup({
     name: new FormControl('dataset'),
     direction: new FormControl(Direction.Pull),
@@ -154,6 +145,9 @@ describe('ReplicationFormComponent', () => {
       ),
     ],
     providers: [
+      // The component renders `<ix-form>`; the bundle mocks the services it injects and zeroes the
+      // min submit-feedback hold so the `closed` assertions below stay synchronous.
+      ...ixFormTestingProviders(),
       mockAuth(),
       mockProvider(DatasetService, {
         getDatasetNodeProvider: jest.fn(() => localNodeProvider),
@@ -179,7 +173,7 @@ describe('ReplicationFormComponent', () => {
         confirm: jest.fn(() => of()),
       }),
       mockProvider(SnackbarService),
-      mockProvider(SlideInRef, slideInRef),
+      mockProvider(FormSidePanelService),
     ],
     componentProviders: [
       mockProvider(ReplicationService, {
@@ -191,9 +185,16 @@ describe('ReplicationFormComponent', () => {
   describe('checks replication form', () => {
     beforeEach(fakeAsync(() => {
       spectator = createComponent();
+      closedSpy = jest.spyOn(spectator.component.closed, 'emit');
       tick();
-      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     }));
+
+    // The section groups are module-level and shared by every test here, so anything a test
+    // dirties or invalidates has to be put back even when that test fails part way through.
+    afterEach(() => {
+      sourceForm.controls.name_regex.markAsPristine();
+      targetForm.controls.target_dataset.setErrors(null);
+    });
 
     it('shows form sections', () => {
       expect(spectator.query(GeneralSectionComponent)).toExist();
@@ -203,18 +204,19 @@ describe('ReplicationFormComponent', () => {
       expect(spectator.query(ScheduleSectionComponent)).toExist();
     });
 
-    it('switches to wizard when Switch To Wizard is pressed', async () => {
-      const switchButton = await loader.getHarness(MatButtonHarness.with({ text: 'Switch To Wizard' }));
-      await switchButton.click();
+    it('switches to wizard when the Switch To Wizard footer action is triggered', () => {
+      const switchAction = spectator.component.footerActions.find((action) => action.testId === 'switch-to-wizard');
+      expect(switchAction).toBeTruthy();
+      switchAction!.onClick();
 
-      expect(
-        slideInRef.swap,
-      ).toHaveBeenCalledWith(ReplicationWizardComponent, { wide: true });
+      expect(spectator.inject(FormSidePanelService).swap).toHaveBeenCalledWith(
+        ReplicationWizardComponent,
+        expect.objectContaining({ wide: true, footerless: true }),
+      );
     });
 
-    it('creates a new replication task', async () => {
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+    it('creates a new replication task', () => {
+      spectator.component.submit();
 
       expect(spectator.query(GeneralSectionComponent)!.getPayload).toHaveBeenCalled();
       expect(spectator.query(TransportSectionComponent)!.getPayload).toHaveBeenCalled();
@@ -233,7 +235,22 @@ describe('ReplicationFormComponent', () => {
         auto: true,
         sudo: false,
       }]);
-      expect(slideInRef.close).toHaveBeenCalledWith({ response: existingTask });
+      expect(closedSpy).toHaveBeenCalledWith(true);
+      expect(spectator.inject(SnackbarService).success).toHaveBeenCalledWith('Replication task created.');
+    });
+
+    it('rolls a dirty section up into the host unsaved-changes guard', () => {
+      expect(spectator.component.hasUnsavedChanges()).toBe(false);
+
+      sourceForm.controls.name_regex.markAsDirty();
+      expect(spectator.component.hasUnsavedChanges()).toBe(true);
+    });
+
+    it('rolls section validity up into the host Save gate', () => {
+      expect(spectator.component.canSubmit()).toBe(true);
+
+      targetForm.controls.target_dataset.setErrors({ required: true });
+      expect(spectator.component.canSubmit()).toBe(false);
     });
 
     it('shows eligible snapshots message', fakeAsync(() => {
@@ -266,18 +283,13 @@ describe('ReplicationFormComponent', () => {
 
   describe('updates task', () => {
     beforeEach(fakeAsync(() => {
-      spectator = createComponent({
-        providers: [
-          mockProvider(SlideInRef, { ...slideInRef, getData: jest.fn(() => ({ id: 1 } as ReplicationTask)) }),
-        ],
-      });
+      spectator = createComponent({ props: { replicationToEdit: { id: 1 } as ReplicationTask } });
+      closedSpy = jest.spyOn(spectator.component.closed, 'emit');
       tick();
-      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     }));
 
-    it('updates an existing replication task', async () => {
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+    it('updates an existing replication task', () => {
+      spectator.component.submit();
 
       expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('replication.update', [
         1,
@@ -293,15 +305,15 @@ describe('ReplicationFormComponent', () => {
           sudo: false,
         },
       ]);
-      expect(slideInRef.close).toHaveBeenCalledWith({ response: existingTask });
+      expect(closedSpy).toHaveBeenCalledWith(true);
     });
   });
 
   describe('updates node providers when direction, transport or ssh credentials change', () => {
     beforeEach(fakeAsync(() => {
       spectator = createComponent();
+      closedSpy = jest.spyOn(spectator.component.closed, 'emit');
       tick();
-      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     }));
 
     it('push from local to remote', fakeAsync(() => {
@@ -340,11 +352,32 @@ describe('ReplicationFormComponent', () => {
     }));
   });
 
+  describe('host-driven submit', () => {
+    beforeEach(fakeAsync(() => {
+      spectator = createComponent({
+        props: {
+          replicationToEdit: { id: 1 } as ReplicationTask,
+        },
+      });
+      closedSpy = jest.spyOn(spectator.component.closed, 'emit');
+      tick();
+    }));
+
+    it('emits closed when saved via the host submit() entry point', () => {
+      closedSpy = jest.spyOn(spectator.component.closed, 'emit');
+
+      spectator.component.submit();
+
+      expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('replication.update', [1, expect.anything()]);
+      expect(closedSpy).toHaveBeenCalledWith(true);
+    });
+  });
+
   describe('sudo enabled dialog', () => {
     beforeEach(fakeAsync(() => {
       spectator = createComponent();
+      closedSpy = jest.spyOn(spectator.component.closed, 'emit');
       tick();
-      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     }));
 
     it('opens sudo enabled dialog when choosing to existing ssh credential', fakeAsync(() => {

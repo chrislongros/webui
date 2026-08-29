@@ -1,9 +1,9 @@
 import { DestroyRef, Injectable, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ValidationErrors } from '@angular/forms';
-import { MatDialog } from '@angular/material/dialog';
 import { ComponentStore } from '@ngrx/component-store';
 import { tapResponse } from '@ngrx/operators';
+import { TnDialog } from '@truenas/ui-components';
 import { differenceBy, isEqual, without } from 'lodash-es';
 import {
   combineLatest,
@@ -68,7 +68,6 @@ export interface PoolManagerState {
   enclosures: Enclosure[];
   name: string;
   nameErrors: ValidationErrors | null;
-  encryption: string | null;
   encryptionType: EncryptionType;
   sedPassword: string | null;
   hasSedCapableDisks: boolean;
@@ -76,6 +75,8 @@ export interface PoolManagerState {
   enclosureSettings: PoolManagerEnclosureSettings;
   topology: PoolManagerTopology;
   categorySequence: VDevType[];
+  // Community Edition only: bypasses topology policy checks. Never set on Enterprise.
+  forceTopology: boolean;
 }
 
 type TopologyCategoryUpdate = Partial<Omit<PoolManagerTopologyCategory, 'vdevs' | 'hasCustomDiskSelection'>>;
@@ -104,7 +105,6 @@ export const initialState: PoolManagerState = {
   enclosures: [],
   name: '',
   nameErrors: null,
-  encryption: null,
   encryptionType: EncryptionType.None,
   sedPassword: null,
   hasSedCapableDisks: false,
@@ -129,6 +129,8 @@ export const initialState: PoolManagerState = {
     VDevType.Special,
     VDevType.Dedup,
   ],
+
+  forceTopology: false,
 };
 
 @Injectable()
@@ -137,7 +139,7 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
   private api = inject(ApiService);
   private errorHandler = inject(ErrorHandlerService);
   private generateVdevs = inject(GenerateVdevsService);
-  private matDialog = inject(MatDialog);
+  private tnDialog = inject(TnDialog);
   private destroyRef = inject(DestroyRef);
 
   readonly startOver$ = new Subject<void>();
@@ -145,7 +147,6 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
   readonly isLoading$ = this.select((state) => state.isLoading);
   readonly name$ = this.select((state) => state.name);
   readonly nameErrors$ = this.select((state) => state.nameErrors);
-  readonly encryption$ = this.select((state) => state.encryption);
   readonly encryptionType$ = this.select((state) => state.encryptionType);
   readonly sedPassword$ = this.select((state) => state.sedPassword);
   readonly hasSedCapableDisks$ = this.select((state) => state.hasSedCapableDisks);
@@ -153,6 +154,7 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
   readonly topology$ = this.select((state) => state.topology);
   readonly diskSettings$ = this.select((state) => state.diskSettings);
   readonly enclosureSettings$ = this.select((state) => state.enclosureSettings);
+  readonly forceTopology$ = this.select((state) => state.forceTopology);
   readonly totalUsableCapacity$ = this.select(
     this.topology$,
     (topology) => categoryCapacity(topology[VDevType.Data]),
@@ -187,16 +189,6 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
       return uniqueEnclosures.size > 1;
     },
   );
-
-  readonly usesDraidLayout$ = this.select(
-    this.topology$,
-    (topology) => this.isUsingDraidLayout(topology),
-  );
-
-  isUsingDraidLayout(topology: PoolManagerTopology): boolean {
-    const { layout } = topology[VDevType.Data];
-    return layout !== null && isDraidLayout(layout);
-  }
 
   readonly inventory$ = this.select(
     this.allowedDisks$,
@@ -303,23 +295,20 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
     };
   });
 
-  readonly setGeneralOptions = this.updater((state, options: Pick<PoolManagerState, 'nameErrors' | 'name' | 'encryption'>) => {
+  readonly setGeneralOptions = this.updater((state, options: Pick<PoolManagerState, 'nameErrors' | 'name'>) => {
     return {
       ...state,
       ...options,
     };
   });
 
-  readonly setEncryptionOptions = this.updater((state, options: {
+  setEncryptionOptions(options: {
     encryptionType: EncryptionType;
-    encryption: string | null;
     sedPassword: string | null;
-  }) => {
-    return {
-      ...state,
-      ...options,
-    };
-  });
+  }): void {
+    this.patchState(options);
+    this.resetTopologyIfNotEnoughDisks();
+  }
 
   readonly setHasSedCapableDisks = this.updater((state, hasSedCapableDisks: boolean) => {
     return {
@@ -334,6 +323,10 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
     });
 
     this.resetTopologyIfNotEnoughDisks();
+  }
+
+  setForceTopology(forceTopology: boolean): void {
+    this.patchState({ forceTopology });
   }
 
   setEnclosureOptions(enclosureOptions: PoolManagerEnclosureSettings): void {
@@ -363,10 +356,6 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
     }
 
     this.updateTopologyCategory(type, { layout: newLayout });
-
-    if (isDraidLayout(newLayout)) {
-      this.resetTopologyCategory(VDevType.Spare);
-    }
   }
 
   setAutomaticTopologyCategory(type: VDevType, updates: TopologyCategoryUpdate): void {
@@ -451,7 +440,7 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
         const usedDisks = topologyCategoryToDisks(state.topology[type]);
         const inventory = differenceBy(inventoryForStep, usedDisks, (disk: DetailsDisk) => disk.devname);
         const isVdevsLimitedToOne = type === VDevType.Spare || type === VDevType.Cache || type === VDevType.Log;
-        return this.matDialog.open(ManualDiskSelectionComponent, {
+        return this.tnDialog.open(ManualDiskSelectionComponent, {
           data: {
             inventory,
             layout: state.topology[type].layout,
@@ -461,7 +450,7 @@ export class PoolManagerStore extends ComponentStore<PoolManagerState> {
             isSedEncryption: state.encryptionType === EncryptionType.Sed,
           } as ManualDiskSelectionParams,
           panelClass: 'manual-selection-dialog',
-        }).afterClosed();
+        }).closed;
       }),
       filter(Boolean),
       tap((customVdevs: DetailsDisk[][]) => {

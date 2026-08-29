@@ -1,16 +1,21 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal, viewChild } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import {
+  ChangeDetectionStrategy, Component, computed, inject, input,
+} from '@angular/core';
+import { NonNullableFormBuilder } from '@angular/forms';
 import { TranslateService } from '@ngx-translate/core';
-import { of } from 'rxjs';
+import { Role } from 'app/enums/role.enum';
 import { NvmeOfNamespace } from 'app/interfaces/nvme-of.interface';
-import { LoaderService } from 'app/modules/loader/loader.service';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
+import { IxFormHostForm } from 'app/modules/forms/ix-forms/components/ix-form/ix-form-host-form.directive';
+import {
+  FormSubmitEvent, IxFormComponent, SubmitResult,
+} from 'app/modules/forms/ix-forms/components/ix-form/ix-form.component';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   BaseNamespaceFormComponent,
 } from 'app/pages/sharing/nvme-of/namespaces/base-namespace-form/base-namespace-form.component';
-import { NamespaceChanges } from 'app/pages/sharing/nvme-of/namespaces/base-namespace-form/namespace-changes.interface';
+import {
+  createNamespaceForm, NamespaceFormValue, toNamespaceChanges,
+} from 'app/pages/sharing/nvme-of/namespaces/base-namespace-form/namespace-form.utils';
 
 export interface NamespaceFormParams {
   namespace?: NvmeOfNamespace;
@@ -22,61 +27,42 @@ export interface NamespaceFormParams {
   templateUrl: './namespace-form.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    IxFormComponent,
     BaseNamespaceFormComponent,
   ],
 })
-export class NamespaceFormComponent {
-  slideInRef = inject<SlideInRef<NamespaceFormParams, NamespaceChanges>>(SlideInRef);
+export class NamespaceFormComponent extends IxFormHostForm {
   private api = inject(ApiService);
-  private snackbar = inject(SnackbarService);
-  private loader = inject(LoaderService);
+  private formBuilder = inject(NonNullableFormBuilder);
   private translate = inject(TranslateService);
-  private destroyRef = inject(DestroyRef);
-  private baseForm = viewChild(BaseNamespaceFormComponent);
 
-  protected existingNamespace = signal<NvmeOfNamespace>(undefined);
-  protected error = signal<unknown>(null);
+  /** Gates the host-rendered footer Save. */
+  readonly requiredRoles = [Role.SharingNvmeTargetWrite];
 
-  constructor() {
-    this.existingNamespace.set(this.slideInRef.getData().namespace);
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(this.baseForm()?.isFormDirty || false);
-    });
-  }
+  /** Form data supplied by the `tn-side-panel` host, which sets inputs before `ngOnInit`. */
+  readonly namespaceData = input.required<NamespaceFormParams>();
 
-  protected get subsystemId(): number {
-    return this.slideInRef.getData().subsystemId;
-  }
+  protected existingNamespace = computed(() => this.namespaceData().namespace);
+  protected isEdit = computed(() => Boolean(this.existingNamespace()));
 
-  protected onSubmit(newNamespace: NamespaceChanges): void {
+  // Owned here (not by the projected base form) so `<ix-form>` can take it as a required input.
+  protected readonly form = createNamespaceForm(this.formBuilder);
+
+  protected handleSubmit = (event: FormSubmitEvent<NamespaceFormValue>): SubmitResult => {
     const payload = {
-      ...newNamespace,
-      subsys_id: this.subsystemId,
+      ...toNamespaceChanges(event.allValues),
+      subsys_id: this.namespaceData().subsystemId,
     };
 
-    const request$ = this.existingNamespace()
+    const request$ = this.isEdit()
       ? this.api.call('nvmet.namespace.update', [this.existingNamespace().id, payload])
       : this.api.call('nvmet.namespace.create', [payload]);
 
-    request$.pipe(
-      this.loader.withLoader(),
-      takeUntilDestroyed(this.destroyRef),
-    )
-      .subscribe({
-        next: () => {
-          const message = this.existingNamespace()
-            ? this.translate.instant('Namespace updated.')
-            : this.translate.instant('Namespace created.');
-
-          this.snackbar.success(message);
-
-          this.slideInRef.close({
-            response: newNamespace,
-          });
-        },
-        error: (error: unknown) => {
-          this.error.set(error);
-        },
-      });
-  }
+    return {
+      request$,
+      successMessage: this.isEdit()
+        ? this.translate.instant('Namespace updated.')
+        : this.translate.instant('Namespace created.'),
+    };
+  };
 }

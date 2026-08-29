@@ -4,8 +4,11 @@
   margin-bottom: 50px;
 }
 
+// Refresh and the Description field are adjacent blocks in the card body, and neither tn-button
+// nor tn-form-field carries a vertical margin of its own — without this the field's label sits
+// flush under the button.
 .refresh-button {
-  margin-top: 15px;
+  margin: 16px 0;
 }
 
 .header-container {
@@ -15,7 +18,7 @@
   justify-content: space-between;
   padding-bottom: 10px;
 
-  ix-checkbox {
+  tn-form-field:first-child {
     min-width: 60%;
 
     @media(max-width: $breakpoint-sm) {
@@ -33,7 +36,7 @@
       width: 100%;
     }
 
-    ix-input {
+    tn-form-field {
       margin: 0;
       padding: 0;
       width: 100%;

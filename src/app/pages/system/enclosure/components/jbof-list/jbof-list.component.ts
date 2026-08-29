@@ -1,12 +1,18 @@
-import { AsyncPipe } from '@angular/common';
 import { Component, OnInit, ChangeDetectionStrategy, DestroyRef, signal, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatButton } from '@angular/material/button';
-import { MatTooltip } from '@angular/material/tooltip';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { tnIconMarker } from '@truenas/ui-components';
 import {
-  filter, forkJoin, map, switchMap, tap,
+  tnIconMarker,
+  TnButtonComponent,
+  TnCellDefDirective,
+  TnHeaderCellDefDirective,
+  TnTableColumnDirective,
+  TnTableComponent,
+  TnTablePagerComponent,
+  TnTooltipDirective,
+} from '@truenas/ui-components';
+import {
+  filter, forkJoin, map, switchMap,
 } from 'rxjs';
 import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
@@ -14,23 +20,19 @@ import { Role } from 'app/enums/role.enum';
 import { DialogWithSecondaryCheckboxResult } from 'app/interfaces/dialog.interface';
 import { Jbof } from 'app/interfaces/jbof.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { EmptyService } from 'app/modules/empty/empty.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { AsyncDataProvider } from 'app/modules/ix-table/classes/async-data-provider/async-data-provider';
-import { IxTableComponent } from 'app/modules/ix-table/components/ix-table/ix-table.component';
-import { actionsColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-actions/ix-cell-actions.component';
-import { textColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-text/ix-cell-text.component';
-import { IxTableBodyComponent } from 'app/modules/ix-table/components/ix-table-body/ix-table-body.component';
-import { IxTableHeadComponent } from 'app/modules/ix-table/components/ix-table-head/ix-table-head.component';
-import { IxTablePagerComponent } from 'app/modules/ix-table/components/ix-table-pager/ix-table-pager.component';
-import { IxTableEmptyDirective } from 'app/modules/ix-table/directives/ix-table-empty.directive';
-import { createTable } from 'app/modules/ix-table/utils';
 import { LoaderService } from 'app/modules/loader/loader.service';
 import { PageHeaderComponent } from 'app/modules/page-header/page-title-header/page-header.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
+import { AsyncDataProvider } from 'app/modules/tn-table/classes/async-data-provider/async-data-provider';
+import {
+  IconActionConfig,
+} from 'app/modules/tn-table/interfaces/icon-action-config.interface';
+import { tnTableListHost } from 'app/modules/tn-table/utils';
+import { TableActionsCellComponent } from 'app/modules/tn-table-cells/actions-cell/table-actions-cell.component';
+import { TableTextCellComponent } from 'app/modules/tn-table-cells/text-cell/table-text-cell.component';
 import { ApiService } from 'app/modules/websocket/api.service';
-import { JbofFormComponent } from 'app/pages/system/enclosure/components/jbof-list/jbof-form/jbof-form.component';
+import { getJbofFormConfig } from 'app/pages/system/enclosure/components/jbof-list/jbof-form/jbof.form-config';
 import { jbofListElements } from 'app/pages/system/enclosure/components/jbof-list/jbof-list.elements';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
@@ -42,80 +44,79 @@ import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
     PageHeaderComponent,
     BasicSearchComponent,
     RequiresRolesDirective,
-    MatButton,
-    TestDirective,
-    MatTooltip,
+    TnButtonComponent,
+    TnTooltipDirective,
     UiSearchDirective,
-    IxTableComponent,
-    IxTableEmptyDirective,
-    IxTableHeadComponent,
-    IxTableBodyComponent,
-    IxTablePagerComponent,
+    TnTableComponent,
+    TnTableColumnDirective,
+    TnHeaderCellDefDirective,
+    TnCellDefDirective,
+    TableActionsCellComponent,
+    TableTextCellComponent,
+    TnTablePagerComponent,
     TranslateModule,
-    AsyncPipe,
   ],
 })
 export class JbofListComponent implements OnInit {
   private api = inject(ApiService);
-  private slideIn = inject(SlideIn);
+  private formPanel = inject(FormSidePanelService);
   private dialogService = inject(DialogService);
   private errorHandler = inject(ErrorHandlerService);
   private translate = inject(TranslateService);
-  private emptyService = inject(EmptyService);
   private loader = inject(LoaderService);
   private destroyRef = inject(DestroyRef);
 
   protected readonly requiredRoles = [Role.JbofWrite];
   protected readonly searchableElements = jbofListElements;
 
-  searchQuery = signal('');
-  jbofs: Jbof[] = [];
+  protected readonly searchQuery = signal('');
   protected canAddJbof = signal(false);
 
-  dataProvider: AsyncDataProvider<Jbof>;
-  columns = createTable<Jbof>([
-    textColumn({
-      title: this.translate.instant('Description'),
-      propertyName: 'description',
-    }),
-    textColumn({
-      title: this.translate.instant('IPs'),
-      getValue: (row) => [row.mgmt_ip1, row.mgmt_ip2].filter(Boolean).join(', '),
-    }),
-    textColumn({
-      title: this.translate.instant('Username'),
-      propertyName: 'mgmt_username',
-    }),
-    actionsColumn({
-      actions: [
-        {
-          iconName: tnIconMarker('pencil', 'mdi'),
-          tooltip: this.translate.instant('Edit'),
-          onClick: (row) => this.openForm(row),
-        },
-        {
-          iconName: tnIconMarker('delete', 'mdi'),
-          tooltip: this.translate.instant('Delete'),
-          requiredRoles: this.requiredRoles,
-          onClick: (row) => this.doDelete(row),
-        },
-      ],
-    }),
-  ], {
-    uniqueRowTag: (row) => 'jbof-' + row.mgmt_username,
-    ariaLabels: (row) => [row.mgmt_username, this.translate.instant('JBOF')],
+  // Built here rather than in ngOnInit so `tnTableListHost` below can take it in an
+  // injection context.
+  protected readonly dataProvider = new AsyncDataProvider<Jbof>(
+    this.api.call('jbof.query').pipe(takeUntilDestroyed(this.destroyRef)),
+  );
+
+  protected readonly actions: IconActionConfig<Jbof>[] = [
+    {
+      iconName: tnIconMarker('pencil', 'mdi'),
+      tooltip: this.translate.instant('Edit'),
+      onClick: (row) => this.openForm(row),
+    },
+    {
+      iconName: tnIconMarker('delete', 'mdi'),
+      tooltip: this.translate.instant('Delete'),
+      requiredRoles: this.requiredRoles,
+      onClick: (row) => this.doDelete(row),
+    },
+  ];
+
+  protected readonly list = tnTableListHost<Jbof>(this.dataProvider, {
+    displayedColumns: [
+      'description',
+      // `ips` renders a value no single property holds, so it has to name its own sort key.
+      // `sortBy` is annotated so `list` can be typed without inferring `ipsText`, which is
+      // derived from `list` — leaving it to inference makes the pair circular and both `any`.
+      { name: 'ips', sortBy: (row: Jbof): string => this.ipsText(row) },
+      'mgmt_username',
+      'actions',
+    ],
   });
 
-  protected get emptyConfigService(): EmptyService {
-    return this.emptyService;
-  }
+  protected readonly trackByJbofId = (_index: number, row: Jbof): number => row.id;
+
+  protected readonly uniqueRowTag = this.list.rowTag((row) => 'jbof-' + row.mgmt_username);
+
+  protected readonly ariaLabel = this.list.perRow(
+    (row) => [row.mgmt_username, this.translate.instant('JBOF')].join(' '),
+  );
+
+  protected readonly ipsText = this.list.perRow(
+    (row) => [row.mgmt_ip1, row.mgmt_ip2].filter(Boolean).join(', '),
+  );
 
   ngOnInit(): void {
-    const request$ = this.api.call('jbof.query').pipe(
-      tap((jbofs) => this.jbofs = jbofs),
-      takeUntilDestroyed(this.destroyRef),
-    );
-    this.dataProvider = new AsyncDataProvider(request$);
     this.getJbofs();
     this.dataProvider.emptyType$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.onListFiltered(this.searchQuery());
@@ -123,7 +124,12 @@ export class JbofListComponent implements OnInit {
   }
 
   protected openForm(jbof?: Jbof): void {
-    this.slideIn.open(JbofFormComponent, { data: jbof }).onSuccess(() => this.getJbofs(), this.destroyRef);
+    this.formPanel.openForm(getJbofFormConfig(this.api, this.translate, jbof), {
+      title: jbof
+        ? this.translate.instant('Edit Expansion Shelf')
+        : this.translate.instant('Add Expansion Shelf'),
+      ...(jbof ? { editData: jbof } : {}),
+    }).onSuccess(() => this.getJbofs(), this.destroyRef);
   }
 
   protected doDelete(jbof: Jbof): void {
@@ -156,7 +162,7 @@ export class JbofListComponent implements OnInit {
     this.updateAvailableJbof();
   }
 
-  updateAvailableJbof(): void {
+  private updateAvailableJbof(): void {
     forkJoin([
       this.api.call('jbof.query').pipe(map((jbofs) => jbofs.length)),
       this.api.call('jbof.licensed'),

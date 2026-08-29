@@ -1,30 +1,36 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { TestBed } from '@angular/core/testing';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { createRoutingFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
-import { mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
+import {
+  TnAutocompleteHarness, TnCheckboxHarness, TnInputHarness, TnSelectHarness,
+} from '@truenas/ui-components';
+import { of } from 'rxjs';
+import { failApiCall, mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { UpsMode, UpsShutdownMode } from 'app/enums/ups-mode.enum';
 import { UpsConfig, UpsConfigUpdate } from 'app/interfaces/ups-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { IxComboboxHarness } from 'app/modules/forms/ix-forms/components/ix-combobox/ix-combobox.harness';
-import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { ixFormTestingProviders } from 'app/modules/forms/ix-forms/testing/ix-form-testing.helpers';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { ServiceUpsComponent } from 'app/pages/services/components/service-ups/service-ups.component';
+import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
 describe('ServiceUpsComponent', () => {
   let spectator: Spectator<ServiceUpsComponent>;
   let loader: HarnessLoader;
   let api: ApiService;
 
-  const slideInRef: SlideInRef<undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
+  const getInput = (name: string): Promise<TnInputHarness> => loader.getHarness(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getSelect = (name: string): Promise<TnSelectHarness> => loader.getHarness(
+    TnSelectHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getCheckbox = (name: string): Promise<TnCheckboxHarness> => loader.getHarness(
+    TnCheckboxHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
 
   const createComponent = createRoutingFactory({
     component: ServiceUpsComponent,
@@ -67,9 +73,8 @@ describe('ServiceUpsComponent', () => {
         mockCall('ups.port_choices', ['/dev/uhid', 'auto']),
         mockCall('ups.update'),
       ]),
-      mockProvider(FormErrorHandlerService),
+      ...ixFormTestingProviders(),
       mockProvider(DialogService),
-      mockProvider(SlideInRef, slideInRef),
       mockAuth(),
     ],
   });
@@ -80,54 +85,74 @@ describe('ServiceUpsComponent', () => {
     api = spectator.inject(ApiService);
   });
 
-  it('shows current settings for UPS service when form is opened', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    const values = await form.getValues();
+  it('blocks Save when the initial config load fails', () => {
+    expect(spectator.component.canSubmit()).toBe(true);
 
+    const showErrorModal = jest.spyOn(spectator.inject(ErrorHandlerService), 'showErrorModal')
+      .mockReturnValue(of(true));
+    failApiCall(api, 'ups.config');
+
+    // A fresh instance rather than a second `ngOnInit()` on the one from `beforeEach`:
+    // re-initialising an already-initialised form re-registers its valueChanges subscriptions,
+    // so the assertion would hinge on double-init being harmless.
+    const failed = TestBed.createComponent(ServiceUpsComponent);
+    failed.detectChanges();
+
+    expect(showErrorModal).toHaveBeenCalled();
+    // `hasLoadFailed` is what the panel reads (for its banner) and what `<ix-form>`'s
+    // extraDisabled is bound to; that binding blocking Save is covered in the ix-form spec.
+    expect(failed.componentInstance.hasLoadFailed()).toBe(true);
+    expect(failed.componentInstance.canSubmit()).toBe(false);
+  });
+
+  it('shows current settings for UPS service when form is opened', async () => {
     expect(api.call).toHaveBeenCalledWith('ups.config');
-    expect(values).toEqual({
-      Identifier: 'ups',
-      'UPS Mode': 'Master',
-      Driver: 'Powerware ups 5 PW9315 3-phase (bcmxcp)',
-      'Port or Hostname': '/dev/uhid',
-      'Monitor User': 'upsmon',
-      'Monitor Password': '',
-      'Extra Users': '',
-      'Remote Monitor': true,
-      'Shutdown Mode': 'UPS goes on battery',
-      'Shutdown Timer': '30',
-      'Shutdown Command': '',
-      'Power Off UPS': true,
-      'No Communication Warning Time': '',
-      'Host Sync': '16',
-      'Auxiliary Parameters (ups.conf)': '',
-      'Auxiliary Parameters (upsd.conf)': '',
-    });
+
+    expect(await (await getInput('identifier')).getValue()).toBe('ups');
+    expect(await (await getSelect('mode')).getDisplayText()).toBe('Master');
+
+    const driver = await loader.getHarness(TnAutocompleteHarness.with({ selector: '[formControlName="driver"]' }));
+    expect(await driver.getInputValue()).toBe('Powerware ups 5 PW9315 3-phase (bcmxcp)');
+
+    const port = await loader.getHarness(TnAutocompleteHarness.with({ selector: '[formControlName="port"]' }));
+    expect(await port.getInputValue()).toBe('/dev/uhid');
+
+    expect(await (await getInput('monuser')).getValue()).toBe('upsmon');
+    expect(await (await getInput('monpwd')).getValue()).toBe('');
+    expect(await (await getInput('extrausers')).getValue()).toBe('');
+    expect(await (await getCheckbox('rmonitor')).isChecked()).toBe(true);
+
+    expect(await (await getSelect('shutdown')).getDisplayText()).toBe('UPS goes on battery');
+    expect(await (await getInput('shutdowntimer')).getValue()).toBe('30');
+    expect(await (await getInput('shutdowncmd')).getValue()).toBe('');
+    expect(await (await getCheckbox('powerdown')).isChecked()).toBe(true);
+
+    expect(await (await getInput('nocommwarntime')).getValue()).toBe('');
+    expect(await (await getInput('hostsync')).getValue()).toBe('16');
+    expect(await (await getInput('options')).getValue()).toBe('');
+    expect(await (await getInput('optionsupsd')).getValue()).toBe('');
   });
 
   it('sends an update payload to websocket when form is saved', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    await form.fillForm({
-      Identifier: 'ups',
-      'UPS Mode': 'Master',
-      Driver: 'HP ups 3 R1500 G2 Serial port (bcmxcp)',
-      'Port or Hostname': 'auto',
-      'Monitor User': 'upsmon',
-      'Monitor Password': 'pleasechange',
-      'Extra Users': '',
-      'Remote Monitor': false,
-      'Shutdown Mode': 'UPS goes on battery',
-      'Shutdown Timer': '30',
-      'Shutdown Command': '',
-      'Power Off UPS': false,
-      'No Communication Warning Time': '',
-      'Host Sync': '16',
-      'Auxiliary Parameters (ups.conf)': '',
-      'Auxiliary Parameters (upsd.conf)': '',
-    });
+    await (await getInput('identifier')).setValue('ups');
+    await (await getSelect('mode')).selectOption('Master');
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    const driver = await loader.getHarness(TnAutocompleteHarness.with({ selector: '[formControlName="driver"]' }));
+    await driver.setInputValue('R1500');
+    await driver.selectOption('HP ups 3 R1500 G2 Serial port (bcmxcp)');
+
+    const port = await loader.getHarness(TnAutocompleteHarness.with({ selector: '[formControlName="port"]' }));
+    await port.setInputValue('auto');
+    await port.selectOption('auto');
+
+    await (await getInput('monuser')).setValue('upsmon');
+    await (await getInput('monpwd')).setValue('pleasechange');
+    await (await getCheckbox('rmonitor')).uncheck();
+
+    await (await getSelect('shutdown')).selectOption('UPS goes on battery');
+    await (await getCheckbox('powerdown')).uncheck();
+
+    spectator.component.submit();
 
     expect(api.call).toHaveBeenCalledWith('ups.update', [{
       driver: 'bcmxcp$R1500 G2',
@@ -149,21 +174,42 @@ describe('ServiceUpsComponent', () => {
     } as UpsConfigUpdate]);
   });
 
-  it('allow custom values to be saved as form value for combobox', async () => {
-    const form = await loader.getHarness(IxFormHarness);
+  // Slave mode is the mirror image of the payload above, and the branch of `handleSubmit` the
+  // master-mode test never reaches: the mode watcher enables the remote fields and disables
+  // `driver`, and the handler drops whichever key belongs to the other mode.
+  it('sends the remote host and port, and no driver, when saved in slave mode', async () => {
+    await (await getSelect('mode')).selectOption('Slave');
 
-    const portSelect = await loader.getHarness(IxComboboxHarness.with({ label: 'Port or Hostname' }));
+    await (await getInput('remotehost')).setValue('10.0.0.5');
+    await (await getInput('remoteport')).setValue('3493');
 
-    await portSelect.writeCustomValue('/my-custom-port');
+    spectator.component.submit();
 
-    const portSelectValue = await portSelect.getValue();
+    expect(api.call).toHaveBeenCalledWith('ups.update', [
+      expect.objectContaining({
+        mode: UpsMode.Slave,
+        remotehost: '10.0.0.5',
+        remoteport: 3493,
+      }) as UpsConfigUpdate,
+    ]);
+    expect(api.call).toHaveBeenCalledWith('ups.update', [
+      expect.not.objectContaining({ driver: expect.anything() }) as UpsConfigUpdate,
+    ]);
+  });
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+  it('allow custom values to be saved as form value for the port autocomplete', async () => {
+    const port = await loader.getHarness(TnAutocompleteHarness.with({ selector: '[formControlName="port"]' }));
 
-    const formValue = await form.getValues();
+    await port.setInputValue('/my-custom-port');
+    await port.blur();
 
-    expect(formValue['Port or Hostname']).toBe('/my-custom-port');
-    expect(portSelectValue).toBe('/my-custom-port');
+    const portValue = await port.getInputValue();
+
+    spectator.component.submit();
+
+    expect(portValue).toBe('/my-custom-port');
+    expect(api.call).toHaveBeenCalledWith('ups.update', [
+      expect.objectContaining({ port: '/my-custom-port' }) as UpsConfigUpdate,
+    ]);
   });
 });

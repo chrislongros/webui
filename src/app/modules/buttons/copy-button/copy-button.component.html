@@ -1,28 +1,33 @@
 @if (!jsonText() || !isValidJson()) {
   <tn-icon-button
-    matTooltipPosition="above"
-    ixTest="copy-to-clipboard"
+    tnTooltipPosition="above"
+    testId="copy-to-clipboard"
     name="content-copy"
     library="mdi"
-    [matTooltip]="'Copy to Clipboard' | translate"
+    [tnTooltip]="'Copy to Clipboard' | translate"
     (click)="copyToClipboard()"
   ></tn-icon-button>
 }
 
 @if (jsonText() && isValidJson()) {
   <tn-icon-button
-    ixTest="copy-to-clipboard-menu"
+    testId="copy-to-clipboard-menu"
     name="content-copy"
     library="mdi"
-    [matTooltip]="'Copy to Clipboard' | translate"
-    [matMenuTriggerFor]="menu"
+    [tnTooltip]="'Copy to Clipboard' | translate"
+    [tnMenuTriggerFor]="menu"
   ></tn-icon-button>
+
+  <tn-menu #menu>
+    <tn-menu-item
+      testId="copy-text"
+      [label]="'Copy Text' | translate"
+      (itemClick)="copyToClipboard()"
+    ></tn-menu-item>
+    <tn-menu-item
+      testId="copy-json-text"
+      [label]="'Copy Json' | translate"
+      (itemClick)="copyJsonToClipboard()"
+    ></tn-menu-item>
+  </tn-menu>
 }
-<mat-menu #menu="matMenu">
-  <button mat-menu-item ixTest="copy-text" (click)="copyToClipboard()">
-    <span>{{ 'Copy Text' | translate }}</span>
-  </button>
-  <button mat-menu-item ixTest="copy-json-text" (click)="copyJsonToClipboard()">
-    <span>{{ 'Copy Json' | translate }}</span>
-  </button>
-</mat-menu>

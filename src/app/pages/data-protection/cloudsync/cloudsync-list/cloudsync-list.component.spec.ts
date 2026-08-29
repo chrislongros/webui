@@ -1,10 +1,11 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatDialog } from '@angular/material/dialog';
 import { Spectator } from '@ngneat/spectator';
 import { createComponentFactory, mockProvider } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
+import {
+  TnButtonHarness, TnDialog, TnSelectHarness, TnTableHarness,
+} from '@truenas/ui-components';
 import { MockComponent, MockPipe } from 'ng-mocks';
 import { of } from 'rxjs';
 import { fakeSuccessfulJob } from 'app/core/testing/utils/fake-job.utils';
@@ -16,23 +17,18 @@ import { ConfirmDeleteCallOptions } from 'app/interfaces/dialog.interface';
 import { ScheduleDescriptionPipe } from 'app/modules/dates/pipes/schedule-description/schedule-description.pipe';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { IxTableHarness } from 'app/modules/ix-table/components/ix-table/ix-table.harness';
-import {
-  IxCellScheduleComponent,
-} from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-schedule/ix-cell-schedule.component';
-import {
-  IxTableColumnsSelectorComponent,
-} from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import {
-  IxTableDetailsRowComponent,
-} from 'app/modules/ix-table/components/ix-table-details-row/ix-table-details-row.component';
-import { IxTableDetailsRowDirective } from 'app/modules/ix-table/directives/ix-table-details-row.directive';
 import { selectJob } from 'app/modules/jobs/store/job.selectors';
 import { LocaleService } from 'app/modules/language/locale.service';
 import { PageHeaderComponent } from 'app/modules/page-header/page-title-header/page-header.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
+import {
+  TableColumnPickerComponent,
+} from 'app/modules/tn-table/components/table-column-picker/table-column-picker.component';
+import {
+  TableDetailsRowComponent,
+} from 'app/modules/tn-table/components/table-details-row/table-details-row.component';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { CloudSyncFormComponent } from 'app/pages/data-protection/cloudsync/cloudsync-form/cloudsync-form.component';
 import { CloudSyncListComponent } from 'app/pages/data-protection/cloudsync/cloudsync-list/cloudsync-list.component';
@@ -43,7 +39,7 @@ import { selectPreferences } from 'app/store/preferences/preferences.selectors';
 describe('CloudSyncListComponent', () => {
   let spectator: Spectator<CloudSyncListComponent>;
   let loader: HarnessLoader;
-  let table: IxTableHarness;
+  let table: TnTableHarness;
 
   const cloudSyncList = [
     {
@@ -100,22 +96,23 @@ describe('CloudSyncListComponent', () => {
     imports: [
       MockComponent(PageHeaderComponent),
       BasicSearchComponent,
-      IxTableColumnsSelectorComponent,
-      IxTableDetailsRowComponent,
-      IxTableDetailsRowDirective,
+      TableColumnPickerComponent,
+      TableDetailsRowComponent,
     ],
     overrideComponents: [
       [
-        IxCellScheduleComponent, {
-          remove: { imports: [ScheduleDescriptionPipe] },
-          add: { imports: [MockPipe(ScheduleDescriptionPipe, jest.fn(() => 'At 00:00, every day'))] },
+        CloudSyncListComponent, {
+          // Both arms: the template pipes `schedule` through it, and the column model calls the
+          // provided instance so a detail row prints a description instead of `[object Object]`.
+          remove: { imports: [ScheduleDescriptionPipe], providers: [ScheduleDescriptionPipe] },
+          add: {
+            imports: [MockPipe(ScheduleDescriptionPipe, jest.fn(() => 'At 00:00, every day'))],
+            providers: [mockProvider(ScheduleDescriptionPipe, { transform: () => 'At 00:00, every day' })],
+          },
         },
       ],
     ],
     providers: [
-      mockProvider(SlideIn, {
-        open: jest.fn(() => SlideInResult.empty()),
-      }),
       mockAuth(),
       mockApi([
         mockCall('cloudsync.query', cloudSyncList),
@@ -126,12 +123,12 @@ describe('CloudSyncListComponent', () => {
         confirm: jest.fn(() => of(true)),
         confirmDelete: jest.fn((options: ConfirmDeleteCallOptions) => options.call()),
       }),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         open: jest.fn(() => SlideInResult.empty()),
       }),
-      mockProvider(MatDialog, {
+      mockProvider(TnDialog, {
         open: jest.fn(() => ({
-          afterClosed: () => of(true),
+          closed: of(true),
         })),
       }),
       mockProvider(LocaleService),
@@ -157,24 +154,64 @@ describe('CloudSyncListComponent', () => {
   beforeEach(async () => {
     spectator = createComponent();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    table = await loader.getHarness(IxTableHarness);
+    table = await loader.getHarness(TnTableHarness);
   });
 
   it('should show table rows', async () => {
-    const expectedRows = [
-      ['Description', 'Frequency', 'State', 'Enabled'],
+    expect(await table.getHeaderTexts()).toEqual(['Description', 'Frequency', 'State', 'Enabled']);
+    expect(await table.getAllRowTexts()).toEqual([
       ['custom-cloudlist', 'At 00:00, every day', 'Pending', 'Yes'],
-    ];
+    ]);
+  });
 
-    const cells = await table.getCellTexts();
-    expect(cells).toEqual(expectedRows);
+  // The Frequency cell renders a `Schedule` object, which lodash cannot order — the column sorts
+  // by the sort key the data transformer derives instead.
+  it('sorts the Frequency column by its sort key rather than the schedule it renders', async () => {
+    jest.spyOn(spectator.component.dataProvider, 'setSorting');
+
+    await table.clickSortHeader('frequency_sort_key');
+
+    const [sorting] = jest.mocked(spectator.component.dataProvider.setSorting).mock.calls[0];
+    expect(sorting.sortBy?.({ frequency_sort_key: '*|*|*|00:00' } as CloudSyncTaskUi)).toBe('*|*|*|00:00');
+  });
+
+  it('expands the detail row when the row itself is clicked', async () => {
+    expect(await table.isRowExpanded(0)).toBe(false);
+
+    await table.clickRow(0);
+
+    expect(await table.isRowExpanded(0)).toBe(true);
+  });
+
+  // A detail row prints text, so every column whose cell formats its value in the template has to
+  // say how to print it — otherwise Frequency reads `[object Object]` and Enabled reads `true`.
+  it('prints the hidden Frequency, Enabled and State columns the way their cells render them', async () => {
+    const picker = await loader.getHarness(TnSelectHarness.with({ ancestor: 'ix-table-column-picker' }));
+    await picker.open();
+    await picker.selectOption('Frequency');
+    await picker.selectOption('Enabled');
+    await picker.selectOption('State');
+    spectator.detectChanges();
+
+    await table.toggleRowExpansion(0);
+
+    const detailsRow = spectator.query('ix-table-details-row');
+    expect(detailsRow).toHaveText('Frequency:At 00:00, every day');
+    expect(detailsRow).toHaveText('Enabled:Yes');
+    expect(detailsRow).toHaveText('State:Pending');
+
+    // Each printed value keeps the suffix its own cell resolves, so a selector aimed at a value
+    // survives the user hiding the column.
+    expect(spectator.query('[data-test="text-frequency-cloudsync-task-custom-cloudlist-row-schedule"]')).toExist();
+    expect(spectator.query('[data-test="text-enabled-cloudsync-task-custom-cloudlist-row-yesno"]')).toExist();
+    expect(spectator.query('[data-test="text-state-cloudsync-task-custom-cloudlist-row-state"]')).toExist();
   });
 
   it('shows confirmation dialog when Run Now button is pressed', async () => {
     jest.spyOn(spectator.inject(DialogService), 'confirm');
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const runNowButton = await loader.getHarness(MatButtonHarness.with({ text: 'Run Now' }));
+    const runNowButton = await loader.getHarness(TnButtonHarness.with({ label: 'Run Now' }));
     await runNowButton.click();
 
     expect(spectator.inject(DialogService).confirm).toHaveBeenCalledWith({
@@ -191,16 +228,19 @@ describe('CloudSyncListComponent', () => {
   });
 
   it('shows form to edit an existing CloudSync when Edit button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Edit' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
     await editButton.click();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(
       CloudSyncFormComponent,
       {
+        title: 'Edit Cloud Sync Task',
         wide: true,
-        data: expect.objectContaining(cloudSyncList[0]),
+        inputs: {
+          taskToEdit: expect.objectContaining(cloudSyncList[0]),
+        },
       },
     );
 
@@ -208,9 +248,9 @@ describe('CloudSyncListComponent', () => {
   });
 
   it('deletes a Cloud Sync with confirmation when Delete button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const deleteButton = await loader.getHarness(MatButtonHarness.with({ text: 'Delete' }));
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
     await deleteButton.click();
 
     expect(spectator.inject(DialogService).confirmDelete).toHaveBeenCalledWith({
@@ -223,14 +263,14 @@ describe('CloudSyncListComponent', () => {
   });
 
   it('shows dialog when Restore button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    jest.spyOn(spectator.inject(MatDialog), 'open');
+    jest.spyOn(spectator.inject(TnDialog), 'open');
 
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Restore' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Restore' }));
     await editButton.click();
 
-    expect(spectator.inject(MatDialog).open).toHaveBeenCalledWith(CloudSyncRestoreDialog, {
+    expect(spectator.inject(TnDialog).open).toHaveBeenCalledWith(CloudSyncRestoreDialog, {
       data: 1,
     });
 
@@ -239,9 +279,9 @@ describe('CloudSyncListComponent', () => {
   });
 
   it('shows confirmation dialog when Dry Run button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Dry Run' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Dry Run' }));
     await editButton.click();
 
     expect(spectator.inject(DialogService).confirm).toHaveBeenCalledWith({

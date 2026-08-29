@@ -1,13 +1,16 @@
 // cspell:ignore zvol zvols volsize volblocksize snapdev Snapdev Vdev helptext ngneat rawvalue pbkdf
-import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, signal, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, computed, DestroyRef, OnInit, signal, inject, input,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import {
-  finalize, forkJoin, map, Observable, of, tap,
+  InputType, TnButtonToggleComponent, TnButtonToggleGroupComponent, TnCheckboxComponent,
+  TnFormFieldComponent, TnFormSectionComponent, TnInputComponent, TnSelectComponent,
+} from '@truenas/ui-components';
+import {
+  finalize, forkJoin, Observable, switchMap, tap, throwError,
 } from 'rxjs';
 import {
   minimumPbkdf2Iterations,
@@ -15,7 +18,6 @@ import {
   specialVdevMaxThreshold,
   specialVdevMinThreshold,
 } from 'app/constants/dataset.constants';
-import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import {
   DatasetCaseSensitivity,
   DatasetRecordSize,
@@ -39,16 +41,8 @@ import { DetailsItemComponent } from 'app/modules/details-table/details-item/det
 import { DetailsTableComponent } from 'app/modules/details-table/details-table.component';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { EditableComponent } from 'app/modules/forms/editable/editable.component';
-import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
-import {
-  IxButtonGroupComponent,
-} from 'app/modules/forms/ix-forms/components/ix-button-group/ix-button-group.component';
-import { IxCheckboxComponent } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.component';
-import { IxFieldsetComponent } from 'app/modules/forms/ix-forms/components/ix-fieldset/ix-fieldset.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
-import { IxSelectComponent } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.component';
-import { IxTextareaComponent } from 'app/modules/forms/ix-forms/components/ix-textarea/ix-textarea.component';
-import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
+import { IxFormHostForm } from 'app/modules/forms/ix-forms/components/ix-form/ix-form-host-form.directive';
+import { FormSubmitEvent, IxFormComponent, SubmitResult } from 'app/modules/forms/ix-forms/components/ix-form/ix-form.component';
 import { IxFormatterService } from 'app/modules/forms/ix-forms/services/ix-formatter.service';
 import {
   forbiddenValues,
@@ -56,14 +50,22 @@ import {
 import { matchOthersFgValidator } from 'app/modules/forms/ix-forms/validators/password-validation/password-validation';
 import { exactLength } from 'app/modules/forms/ix-forms/validators/validators';
 import { FileSizePipe } from 'app/modules/pipes/file-size/file-size.pipe';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { datasetNameTooLong } from 'app/pages/datasets/components/dataset-form/utils/name-length-validation';
+import {
+  VolsizeValidationError,
+} from 'app/pages/datasets/components/zvol-form/volsize-validation-error';
 import { ZvolFormData } from 'app/pages/datasets/components/zvol-form/zvol-form.interface';
-import { getUserProperty, transformSpecialSmallBlockSizeForPayload } from 'app/pages/datasets/utils/dataset.utils';
+import {
+  getDatasetLabel, getUserProperty, transformSpecialSmallBlockSizeForPayload,
+} from 'app/pages/datasets/utils/dataset.utils';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
+import { LicenseService } from 'app/services/license.service';
+
+// volsize values round-trip through the file-size formatter, so a re-saved
+// edit can drift by a few bytes. Treat anything within 0.1% of the original
+// as unchanged to avoid spurious payload churn.
+const volsizeUnchangedRelativeTolerance = 0.001;
 
 @Component({
   selector: 'ix-zvol-form',
@@ -71,64 +73,52 @@ import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
   styleUrls: ['./zvol-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    ModalHeaderComponent,
-    MatCard,
-    MatCardContent,
-    IxFieldsetComponent,
-    IxInputComponent,
-    IxCheckboxComponent,
-    IxSelectComponent,
-    IxTextareaComponent,
+    IxFormComponent,
+    TnFormSectionComponent,
+    TnFormFieldComponent,
+    TnInputComponent,
+    TnCheckboxComponent,
+    TnSelectComponent,
+    TnButtonToggleGroupComponent,
+    TnButtonToggleComponent,
     ReactiveFormsModule,
-    FormActionsComponent,
-    RequiresRolesDirective,
-    MatButton,
-    TestDirective,
     TranslateModule,
     EditableComponent,
     DetailsTableComponent,
     DetailsItemComponent,
-    AsyncPipe,
-    IxButtonGroupComponent,
     FileSizePipe,
   ],
 })
-export class ZvolFormComponent implements OnInit {
-  formatter = inject(IxFormatterService);
+export class ZvolFormComponent extends IxFormHostForm<Dataset> implements OnInit {
+  private formatter = inject(IxFormatterService);
   private translate = inject(TranslateService);
   private formBuilder = inject(NonNullableFormBuilder);
   private api = inject(ApiService);
   private dialogService = inject(DialogService);
   private cdr = inject(ChangeDetectorRef);
-  private formErrorHandler = inject(FormErrorHandlerService);
   private errorHandler = inject(ErrorHandlerService);
-  slideInRef = inject<SlideInRef<{
-    isNew: boolean;
-    parentOrZvolId: string;
-  }, Dataset>>(SlideInRef);
+  private licenseService = inject(LicenseService);
 
   private destroyRef = inject(DestroyRef);
 
-  protected readonly requiredRoles = [Role.DatasetWrite];
+  readonly requiredRoles = [Role.DatasetWrite];
 
-  get title(): string {
-    return this.isNew
-      ? this.translate.instant(helptextZvol.addTitle)
-      : this.translate.instant(helptextZvol.editTitle);
-  }
+  /** Edit/create parameters supplied by the `<tn-side-panel>` host. */
+  readonly params = input.required<{ isNew: boolean; parentOrZvolId: string }>();
 
-  protected parentOrZvolId: string;
-  protected isNew = true;
+  protected readonly parentOrZvolId = computed(() => this.params().parentOrZvolId);
+  protected readonly isNew = computed(() => this.params().isNew);
 
   readonly helptext = helptextZvol;
   readonly OnOff = OnOff;
+  protected readonly InputType = InputType;
   inheritEncryptPlaceholder: string = helptextZvol.encryption.inheritLabel;
   volBlockSizeWarning: string | null;
 
-  protected isLoading = signal(false);
+  protected setupLoading = signal(false);
+  protected formSnapshot = signal<Record<string, unknown> | null>(null);
 
   protected encryptedParent = false;
-  protected encryptionAlgorithm: string;
   protected passphraseParent = false;
   protected encryptionType: 'key' | 'passphrase' = 'key';
   protected inheritEncryption = true;
@@ -138,6 +128,7 @@ export class ZvolFormComponent implements OnInit {
   private inheritedReadonlyValue: string;
   protected volsizeReadonlyWarning: string | null = null;
   private originalVolsize: number | null = null;
+  protected hasDeduplication = false;
 
   form = this.formBuilder.group({
     name: ['', [Validators.required]],
@@ -161,7 +152,6 @@ export class ZvolFormComponent implements OnInit {
     passphrase: ['', [Validators.required, Validators.minLength(8)]],
     confirm_passphrase: ['', [Validators.required]],
     pbkdf2iters: [minimumPbkdf2Iterations, [Validators.required, Validators.min(minimumPbkdf2Iterations)]],
-    algorithm: ['AES-256-GCM', Validators.required],
   }, {
     validators: [
       matchOthersFgValidator(
@@ -174,7 +164,6 @@ export class ZvolFormComponent implements OnInit {
 
   syncOptions: Option[] = mapToOptions(datasetSyncLabels, this.translate);
   protected compressionOptions: Option[] = [];
-  protected compressionOptions$: Observable<Option[]> = of([]);
   protected deduplicationOptions: Option[] = mapToOptions(deduplicationSettingLabels, this.translate);
   protected snapdevOptions: Option[] = mapToOptions(datasetSnapdevLabels, this.translate);
   protected readonlyOptions: Option[] = mapToOptions(onOffLabels, this.translate);
@@ -192,38 +181,21 @@ export class ZvolFormComponent implements OnInit {
     { label: '128 KiB', value: '128K' },
   ];
 
-  private encryptionTypeOptions: Option[] = [
+  protected encryptionTypeOptions: Option[] = [
     { label: this.translate.instant('Key'), value: 'key' },
     { label: this.translate.instant('Passphrase'), value: 'passphrase' },
   ];
 
-  readonly syncOptions$ = of(this.syncOptions);
-  readonly deduplicationOptions$ = of(this.deduplicationOptions);
-  readonly readonlyOptions$ = of(this.readonlyOptions);
-  readonly volblocksizeOptions$ = of(this.volblocksizeOptions);
-  readonly snapdevOptions$ = of(this.snapdevOptions);
-  readonly specialSmallBlockSizeOptions$ = of(this.specialSmallBlockSizeOptions);
-  readonly encryptionTypeOptions$ = of(this.encryptionTypeOptions);
-
-  readonly algorithmOptions$ = this.api.call('pool.dataset.encryption_algorithm_choices').pipe(
-    map((algorithms) => Object.keys(algorithms).map((algorithm) => ({ label: algorithm, value: algorithm }))),
-  );
-
   constructor() {
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(this.form.dirty);
-    });
-
+    super();
     this.form.controls.key.disable();
     this.form.controls.passphrase.disable();
     this.form.controls.confirm_passphrase.disable();
     this.form.controls.pbkdf2iters.disable();
-    this.form.controls.algorithm.disable();
   }
 
   ngOnInit(): void {
-    this.isNew = this.slideInRef.getData().isNew;
-    this.parentOrZvolId = this.slideInRef.getData().parentOrZvolId;
+    this.checkIfDedupIsSupported();
 
     // Set up conditional validation for special_small_block_size_custom
     this.form.controls.special_small_block_size.valueChanges.pipe(
@@ -245,31 +217,282 @@ export class ZvolFormComponent implements OnInit {
       customControl.updateValueAndValidity();
     });
 
-    if (this.parentOrZvolId) {
-      this.setupForm();
+    this.setupForm();
+  }
+
+  protected handleSubmit = (event: FormSubmitEvent<ZvolFormData>): SubmitResult<Dataset, Dataset> => {
+    if (this.isNew()) {
+      return this.buildCreateResult(event);
     }
+    return this.buildEditResult(event);
+  };
+
+  protected getOptionLabel(options: Option[], value: unknown): string {
+    return options.find((option) => option.value === value)?.label ?? String(value ?? '');
+  }
+
+  private checkIfDedupIsSupported(): void {
+    this.licenseService.hasDedup$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((hasDedup) => {
+      this.hasDeduplication = hasDedup;
+      this.updateDeduplicationControl();
+      this.cdr.markForCheck();
+    });
+  }
+
+  // When deduplication is hidden (Enterprise without a dedup license), the
+  // control still carries `Validators.required`, which would silently block
+  // submission. Drop the validator while hidden; the value is left untouched
+  // and the payload builders omit `deduplication` entirely based on
+  // `hasDeduplication`.
+  private updateDeduplicationControl(): void {
+    const control = this.form.controls.deduplication;
+    if (this.hasDeduplication) {
+      control.setValidators([Validators.required]);
+    } else {
+      control.clearValidators();
+    }
+    control.updateValueAndValidity({ emitEvent: false });
+  }
+
+  private buildCreateResult(event: FormSubmitEvent<ZvolFormData>): SubmitResult<Dataset, Dataset> {
+    const data = this.buildCreatePayload(event.allValues);
+    return {
+      request$: this.api.call('pool.dataset.create', [data as DatasetCreate]),
+      // Owned by the form so every entry point (details panel, details card, explorer) confirms
+      // identically; the openers deliberately raise no snackbar of their own.
+      successMessage: (created) => this.translate.instant('Zvol «{name}» created.', {
+        name: getDatasetLabel(created),
+      }),
+      // The opener needs the record to switch to the new zvol.
+      closeWith: (result) => result,
+    };
+  }
+
+  private buildEditResult(event: FormSubmitEvent<ZvolFormData>): SubmitResult<Dataset, Dataset> {
+    return {
+      request$: this.api.call('pool.dataset.query', [[['id', '=', this.parentOrZvolId()]]]).pipe(
+        switchMap((datasets) => {
+          const { payload, canSubmit } = this.buildEditPayload(event, datasets);
+          if (!canSubmit) {
+            return throwError(() => new VolsizeValidationError('Zvol volsize cannot be shrunk.'));
+          }
+          return this.api.call('pool.dataset.update', [this.parentOrZvolId(), payload]);
+        }),
+      ),
+      // See `buildCreateResult` — the message is the form's, not the opener's.
+      successMessage: (updated) => this.translate.instant('Zvol «{name}» updated.', {
+        name: getDatasetLabel(updated),
+      }),
+      closeWith: (result) => result,
+      onError: (error: unknown) => {
+        if (error instanceof VolsizeValidationError) {
+          this.dialogService.error({
+            title: helptextZvol.zvolSaveError.title,
+            message: helptextZvol.zvolSaveError.msg,
+          });
+          return true;
+        }
+        return false;
+      },
+    };
+  }
+
+  private buildCreatePayload(allValues: ZvolFormData): ZvolFormData {
+    const data: ZvolFormData = { ...allValues };
+    data.type = DatasetType.Volume;
+    data.name = this.parentOrZvolId() + '/' + (data.name || '');
+
+    // Handle special_small_block_size transformation
+    const transformedValue = transformSpecialSmallBlockSizeForPayload(
+      data.special_small_block_size as WithInherit<OnOff>,
+      data.special_small_block_size_custom,
+    );
+    if (transformedValue === undefined || transformedValue === inherit) {
+      delete data.special_small_block_size;
+    } else {
+      data.special_small_block_size = transformedValue;
+    }
+    delete data.special_small_block_size_custom;
+
+    if (data.sync === inherit) {
+      delete data.sync;
+    }
+    if (data.compression === inherit) {
+      delete data.compression;
+    }
+    if (data.deduplication === inherit || !this.hasDeduplication) {
+      delete data.deduplication;
+    }
+    if (data.readonly === inherit) {
+      delete data.readonly;
+    }
+    if (data.volblocksize !== inherit) {
+      let volblocksizeIntegerValue = parseInt(data.volblocksize.match(/[a-zA-Z]+|[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)+/g)[0]);
+
+      if (volblocksizeIntegerValue === 512) {
+        volblocksizeIntegerValue = 512;
+      } else {
+        volblocksizeIntegerValue = volblocksizeIntegerValue * 1024;
+      }
+
+      data.volsize = this.alignVolsizeToBlocksize(data.volsize as number, volblocksizeIntegerValue);
+    } else {
+      delete data.volblocksize;
+    }
+
+    // encryption values
+    if (data.inherit_encryption) {
+      delete data.encryption;
+    } else if (data.encryption) {
+      data.encryption_options = {};
+      if (data.encryption_type === 'key') {
+        data.encryption_options.generate_key = data.generate_key;
+        if (!data.generate_key) {
+          data.encryption_options.key = data.key;
+        }
+      } else if (data.encryption_type === 'passphrase') {
+        data.encryption_options.passphrase = data.passphrase;
+        data.encryption_options.pbkdf2iters = Number(data.pbkdf2iters);
+      }
+    }
+    delete data.key;
+    delete data.generate_key;
+    delete data.passphrase;
+    delete data.confirm_passphrase;
+    delete data.pbkdf2iters;
+    delete data.encryption_type;
+
+    return data;
+  }
+
+  private buildEditPayload(
+    event: FormSubmitEvent<ZvolFormData>,
+    datasets: Dataset[],
+  ): { payload: DatasetUpdate; canSubmit: boolean } {
+    // Payload mixes two sources on purpose:
+    //   - `event.changedValues` for the bulk of the keys (diff-based, so
+    //     untouched fields aren't sent).
+    //   - `this.form.controls.*` / `originalVolsize` / `originalReadonlyValue`
+    //     for the readonly/volsize interaction below, because the decision of
+    //     whether to include `volsize` depends on the *effective* readonly
+    //     value (which resolves `inherit` against the parent) and the
+    //     precision-preserved original volsize — neither of which survives
+    //     the diff cleanly.
+    // Refactors that move logic between the two must keep readonly and volsize
+    // reading from the live form, not from `changedValues`.
+    const data: ZvolFormData = { ...event.changedValues };
+
+    // Remove fields that should never be sent on edit
+    delete data.name;
+    delete data.volblocksize;
+    delete data.type;
+    delete data.sparse;
+    delete data.inherit_encryption;
+    delete data.encryption;
+    delete data.encryption_type;
+    delete data.generate_key;
+    delete data.key;
+    delete data.passphrase;
+    delete data.confirm_passphrase;
+    delete data.pbkdf2iters;
+
+    // Never send deduplication when the field is hidden (Enterprise without a
+    // dedup license) — it isn't user-editable in that state.
+    if (!this.hasDeduplication) {
+      delete data.deduplication;
+    }
+
+    // Handle readonly/volsize interaction
+    const readonlyValue = this.form.controls.readonly.value;
+    const effectiveCurrentValue = this.getEffectiveReadonlyValue(readonlyValue);
+    const effectiveOriginalValue = this.getEffectiveReadonlyValue(this.originalReadonlyValue);
+    const isEffectivelyReadonlyOn = effectiveCurrentValue === OnOff.On as string;
+    const hasEffectivelyChanged = effectiveCurrentValue !== effectiveOriginalValue;
+    if (isEffectivelyReadonlyOn || hasEffectivelyChanged) {
+      delete data.volsize;
+    }
+
+    // Handle special_small_block_size transformation.
+    //
+    // Inherit is intentionally dropped from the payload rather than sent as
+    // 'INHERIT': the zvol UI has always stripped it on create, and the zvol
+    // update endpoint treats an omitted key as "leave inherited" on its side.
+    // If the server ever grows a distinction between "still inherit" and
+    // "no change", this branch must start sending `inherit` explicitly (as
+    // dataset-form already does) — otherwise explicit → inherit transitions
+    // would silently no-op.
+    //
+    // `in changedValues` gates on "did either paired control change" (membership
+    // = changed); the value itself comes from allValues so both halves are seen.
+    if ('special_small_block_size' in event.changedValues || 'special_small_block_size_custom' in event.changedValues) {
+      const transformedValue = transformSpecialSmallBlockSizeForPayload(
+        event.allValues.special_small_block_size as WithInherit<OnOff>,
+        event.allValues.special_small_block_size_custom,
+      );
+      if (transformedValue === undefined || transformedValue === inherit) {
+        delete data.special_small_block_size;
+      } else {
+        data.special_small_block_size = transformedValue;
+      }
+    }
+    delete data.special_small_block_size_custom;
+
+    // Handle volsize alignment and validation
+    let canSubmit = true;
+    if (data.volsize !== undefined) {
+      let volblocksizeIntegerValue: number | string = datasets[0].volblocksize.value.match(/[a-zA-Z]+|[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)+/g)[0];
+      volblocksizeIntegerValue = parseInt(volblocksizeIntegerValue, 10);
+      if (volblocksizeIntegerValue === 512) {
+        volblocksizeIntegerValue = 512;
+      } else {
+        volblocksizeIntegerValue = volblocksizeIntegerValue * 1024;
+      }
+
+      const parsedVolsize = Number(data.volsize);
+
+      const hasVolumeChanged = this.originalVolsize === null
+        || Math.abs(parsedVolsize - this.originalVolsize) / this.originalVolsize > volsizeUnchangedRelativeTolerance;
+
+      if (hasVolumeChanged) {
+        data.volsize = this.alignVolsizeToBlocksize(parsedVolsize, volblocksizeIntegerValue);
+      } else {
+        data.volsize = this.originalVolsize;
+      }
+
+      let roundedVolSize = datasets[0].volsize.parsed;
+
+      if (datasets[0].volsize.parsed % volblocksizeIntegerValue !== 0) {
+        roundedVolSize = datasets[0].volsize.parsed
+          + (volblocksizeIntegerValue - datasets[0].volsize.parsed % volblocksizeIntegerValue);
+      }
+
+      if (data.volsize && data.volsize < roundedVolSize) {
+        canSubmit = false;
+      }
+    }
+
+    return { payload: data as DatasetUpdate, canSubmit };
   }
 
   private setupForm(): void {
-    if (!this.isNew) {
+    if (!this.isNew()) {
       this.disableEncryptionFields();
       this.form.controls.name.disable();
     }
 
-    this.isLoading.set(true);
+    this.setupLoading.set(true);
     forkJoin([
-      this.api.call('pool.dataset.query', [[['id', '=', this.parentOrZvolId]]]),
+      this.api.call('pool.dataset.query', [[['id', '=', this.parentOrZvolId()]]]),
       this.loadRecommendedBlocksize(),
       this.api.call('pool.dataset.compression_choices').pipe(choicesToOptions()),
     ])
       .pipe(
-        finalize(() => this.isLoading.set(false)),
+        finalize(() => this.setupLoading.set(false)),
         this.errorHandler.withErrorHandler(),
         takeUntilDestroyed(this.destroyRef),
       ).subscribe({
         next: ([parents, , compressionOptions]) => {
           this.compressionOptions = compressionOptions;
-          this.compressionOptions$ = of(compressionOptions);
           const parentOrZvol = parents[0];
           if (parentOrZvol.encrypted) {
             this.form.controls.encryption.setValue(true);
@@ -285,6 +508,9 @@ export class ZvolFormComponent implements OnInit {
           if (parentOrZvol?.type === DatasetType.Filesystem) {
             this.setReadonlyField(parentOrZvol, parentOrZvol);
             this.inheritFileSystemProperties(parentOrZvol);
+            if (!this.isNew()) {
+              this.formSnapshot.set(this.form.getRawValue());
+            }
           } else {
             let parentDatasetId: string | string[] = parentOrZvol.name.split('/');
             parentDatasetId.pop();
@@ -306,6 +532,10 @@ export class ZvolFormComponent implements OnInit {
                 this.inheritSnapdev(parentOrZvol, parentDataset);
                 this.inheritSpecialSmallBlockSize(parentDataset);
 
+                if (!this.isNew()) {
+                  this.formSnapshot.set(this.form.getRawValue());
+                }
+
                 this.cdr.markForCheck();
               },
             });
@@ -322,7 +552,7 @@ export class ZvolFormComponent implements OnInit {
     }) || []).filter((name): name is string => name !== undefined);
 
     this.form.controls.name.addValidators([
-      datasetNameTooLong(parent.name),
+      datasetNameTooLong(parent.name, this.translate),
       forbiddenValues(namesInUse, isCaseInsensitive),
     ]);
   }
@@ -364,7 +594,6 @@ export class ZvolFormComponent implements OnInit {
 
   private inheritEncryptionProperties(parent: Dataset): void {
     this.encryptedParent = parent.encrypted;
-    this.encryptionAlgorithm = parent.encryption_algorithm.value;
 
     this.inheritEncryptPlaceholder = helptextZvol.encryption.inheritNotEncrypted;
     if (this.encryptedParent) {
@@ -377,10 +606,7 @@ export class ZvolFormComponent implements OnInit {
       this.inheritEncryptPlaceholder = helptextZvol.encryption.inheritEncrypted;
     }
 
-    if (this.isNew) {
-      if (this.encryptedParent && parent.encryption_algorithm) {
-        this.form.controls.algorithm.setValue(parent.encryption_algorithm.value);
-      }
+    if (this.isNew()) {
       this.form.controls.encryption.disable();
       if (this.passphraseParent) {
         this.form.controls.encryption_type.setValue('passphrase');
@@ -408,7 +634,6 @@ export class ZvolFormComponent implements OnInit {
     const inheritLabel = this.translate.instant('Inherit');
     this.syncOptions.unshift({ label: `${inheritLabel} (${parent.sync.rawvalue})`, value: inherit });
     this.compressionOptions.unshift({ label: `${inheritLabel} (${parent.compression.rawvalue})`, value: inherit });
-    this.compressionOptions$ = of(this.compressionOptions);
     this.deduplicationOptions.unshift({ label: `${inheritLabel} (${parent.deduplication.rawvalue})`, value: inherit });
     this.volblocksizeOptions.unshift({ label: inheritLabel, value: inherit });
     this.snapdevOptions.unshift({ label: `${inheritLabel} (${parent.snapdev.rawvalue})`, value: inherit });
@@ -445,7 +670,6 @@ export class ZvolFormComponent implements OnInit {
     } else {
       this.compressionOptions.unshift({ label: `${inheritLabel} (${parentDataset[0].compression.rawvalue})`, value: inherit });
     }
-    this.compressionOptions$ = of(this.compressionOptions);
 
     if (parent.compression.source === ZfsPropertySource.Inherited) {
       this.form.controls.compression.setValue(inherit);
@@ -511,7 +735,6 @@ export class ZvolFormComponent implements OnInit {
         }
         if (!inheritEncryption) {
           this.form.controls.encryption_type.enable();
-          this.form.controls.algorithm.enable();
           if (this.passphraseParent) { // keep it hidden if it passphrase
             this.form.controls.encryption_type.disable();
           }
@@ -543,10 +766,8 @@ export class ZvolFormComponent implements OnInit {
           this.setEncryptionFieldsDisabled(!encryption);
         } else if (encryption) {
           this.form.controls.encryption_type.enable();
-          this.form.controls.algorithm.enable();
         } else {
           this.form.controls.encryption_type.disable();
-          this.form.controls.algorithm.disable();
         }
         if (this.encryptionType === 'key' && !this.generateKey) {
           this.setKeyFieldsDisabled(!encryption);
@@ -582,11 +803,9 @@ export class ZvolFormComponent implements OnInit {
     if (disabled) {
       this.form.controls.encryption_type.disable();
       this.form.controls.generate_key.disable();
-      this.form.controls.algorithm.disable();
     } else {
       this.form.controls.encryption_type.enable();
       this.form.controls.generate_key.enable();
-      this.form.controls.algorithm.enable();
     }
   }
 
@@ -610,234 +829,8 @@ export class ZvolFormComponent implements OnInit {
     }
   }
 
-  private getPayload(data: ZvolFormData): ZvolFormData {
-    data.type = DatasetType.Volume;
-
-    if (!this.isNew) {
-      delete data.name;
-      delete data.volblocksize;
-      delete data.type;
-      delete data.sparse;
-    } else {
-      data.name = this.parentOrZvolId + '/' + (data.name || '');
-    }
-
-    return data;
-  }
-
-  private addSubmit(): void {
-    this.isLoading.set(true);
-    const data: ZvolFormData = this.getPayload(this.form.getRawValue());
-
-    // Handle special_small_block_size transformation
-    const transformedValue = transformSpecialSmallBlockSizeForPayload(
-      data.special_small_block_size as WithInherit<OnOff>,
-      data.special_small_block_size_custom,
-    );
-    if (transformedValue === undefined || transformedValue === inherit) {
-      // For zvols, delete the property when inherit or undefined
-      delete data.special_small_block_size;
-    } else {
-      data.special_small_block_size = transformedValue;
-    }
-
-    // Remove UI-only field
-    delete data.special_small_block_size_custom;
-
-    if (data.sync === inherit) {
-      delete data.sync;
-    }
-    if (data.compression === inherit) {
-      delete data.compression;
-    }
-    if (data.deduplication === inherit) {
-      delete data.deduplication;
-    }
-    if (data.readonly === inherit) {
-      delete data.readonly;
-    }
-    if (data.volblocksize !== inherit) {
-      let volblocksizeIntegerValue = parseInt(data.volblocksize.match(/[a-zA-Z]+|[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)+/g)[0]);
-
-      if (volblocksizeIntegerValue === 512) {
-        volblocksizeIntegerValue = 512;
-      } else {
-        volblocksizeIntegerValue = volblocksizeIntegerValue * 1024;
-      }
-
-      data.volsize = this.alignVolsizeToBlocksize(data.volsize as number, volblocksizeIntegerValue);
-    } else {
-      delete data.volblocksize;
-    }
-
-    // encryption values
-    if (data.inherit_encryption) {
-      // When inherit_encryption is true, don't send encryption field at all
-      delete data.encryption;
-    } else if (data.encryption) {
-      data.encryption_options = {};
-      if (data.encryption_type === 'key') {
-        data.encryption_options.generate_key = data.generate_key;
-        if (!data.generate_key) {
-          data.encryption_options.key = data.key;
-        }
-      } else if (data.encryption_type === 'passphrase') {
-        data.encryption_options.passphrase = data.passphrase;
-        data.encryption_options.pbkdf2iters = Number(data.pbkdf2iters);
-      }
-      data.encryption_options.algorithm = data.algorithm;
-    }
-    // Keep inherit_encryption in the payload - don't delete it
-    delete data.key;
-    delete data.generate_key;
-    delete data.passphrase;
-    delete data.confirm_passphrase;
-    delete data.pbkdf2iters;
-    delete data.encryption_type;
-    delete data.algorithm;
-
-    this.api.call('pool.dataset.create', [data as DatasetCreate]).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (dataset) => this.handleZvolCreateUpdate(dataset),
-      error: (error: unknown) => {
-        this.isLoading.set(false);
-        this.formErrorHandler.handleValidationErrors(error, this.form);
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  private editSubmit(): void {
-    this.isLoading.set(true);
-    this.api.call('pool.dataset.query', [[['id', '=', this.parentOrZvolId]]]).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (datasets) => {
-        const data: ZvolFormData = this.getPayload(this.form.getRawValue());
-
-        const readonlyValue = this.form.controls.readonly.value;
-        const effectiveCurrentValue = this.getEffectiveReadonlyValue(readonlyValue);
-        const effectiveOriginalValue = this.getEffectiveReadonlyValue(this.originalReadonlyValue);
-        const isEffectivelyReadonlyOn = effectiveCurrentValue === OnOff.On as string;
-        const hasEffectivelyChanged = effectiveCurrentValue !== effectiveOriginalValue;
-        if (isEffectivelyReadonlyOn || hasEffectivelyChanged) {
-          delete data.volsize;
-        }
-
-        // Handle special_small_block_size transformation
-        const transformedValue = transformSpecialSmallBlockSizeForPayload(
-          data.special_small_block_size as WithInherit<OnOff>,
-          data.special_small_block_size_custom,
-        );
-        if (transformedValue === undefined || transformedValue === inherit) {
-          // For zvols, delete the property when inherit or undefined
-          delete data.special_small_block_size;
-        } else {
-          data.special_small_block_size = transformedValue;
-        }
-
-        // Remove UI-only field
-        delete data.special_small_block_size_custom;
-
-        if (data.inherit_encryption) {
-          delete data.encryption;
-        } else if (data.encryption) {
-          data.encryption_options = {};
-          if (data.encryption_type === 'key') {
-            data.encryption_options.generate_key = data.generate_key;
-            if (!data.generate_key) {
-              data.encryption_options.key = data.key;
-            }
-          } else if (data.encryption_type === 'passphrase') {
-            data.encryption_options.passphrase = data.passphrase;
-            data.encryption_options.pbkdf2iters = Number(data.pbkdf2iters);
-          }
-          data.encryption_options.algorithm = data.algorithm;
-        }
-
-        // Delete all encryption-related fields when editing
-        delete data.inherit_encryption;
-        delete data.key;
-        delete data.generate_key;
-        delete data.passphrase;
-        delete data.confirm_passphrase;
-        delete data.pbkdf2iters;
-        delete data.encryption_type;
-        delete data.algorithm;
-
-        let canSubmit = true;
-        if (data.volsize !== undefined) {
-          let volblocksizeIntegerValue: number | string = datasets[0].volblocksize.value.match(/[a-zA-Z]+|[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)+/g)[0];
-          volblocksizeIntegerValue = parseInt(volblocksizeIntegerValue, 10);
-          if (volblocksizeIntegerValue === 512) {
-            volblocksizeIntegerValue = 512;
-          } else {
-            volblocksizeIntegerValue = volblocksizeIntegerValue * 1024;
-          }
-
-          const parsedVolsize = Number(data.volsize);
-
-          // Check if volsize was actually changed by comparing with original
-          // Account for small rounding differences from formatter (< 0.1% difference)
-          const hasVolumeChanged = this.originalVolsize === null
-            || Math.abs(parsedVolsize - this.originalVolsize) / this.originalVolsize > 0.001;
-
-          if (hasVolumeChanged) {
-            // User changed the size, use the parsed value and round to block size
-            data.volsize = this.alignVolsizeToBlocksize(parsedVolsize, volblocksizeIntegerValue);
-          } else {
-            // User didn't change the size, use the original value to avoid precision loss
-            data.volsize = this.originalVolsize;
-          }
-
-          let roundedVolSize = datasets[0].volsize.parsed;
-
-          if (datasets[0].volsize.parsed % volblocksizeIntegerValue !== 0) {
-            roundedVolSize = datasets[0].volsize.parsed
-              + (volblocksizeIntegerValue - datasets[0].volsize.parsed % volblocksizeIntegerValue);
-          }
-
-          if (data.volsize && data.volsize < roundedVolSize) {
-            canSubmit = false;
-          }
-        }
-
-        if (canSubmit) {
-          this.api.call('pool.dataset.update', [this.parentOrZvolId, data as DatasetUpdate]).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-            next: (dataset) => this.handleZvolCreateUpdate(dataset),
-            error: (error: unknown) => {
-              this.isLoading.set(false);
-              this.formErrorHandler.handleValidationErrors(error, this.form);
-              this.cdr.markForCheck();
-            },
-          });
-        } else {
-          this.isLoading.set(false);
-          this.dialogService.error({
-            title: helptextZvol.zvolSaveError.title,
-            message: helptextZvol.zvolSaveError.msg,
-          });
-        }
-      },
-      error: (error: unknown): void => {
-        this.errorHandler.showErrorModal(error);
-        this.isLoading.set(false);
-        this.cdr.markForCheck();
-      },
-    });
-  }
-
-  protected onSubmit(): void {
-    if (this.isNew) {
-      this.addSubmit();
-    } else {
-      this.editSubmit();
-    }
-  }
-
-  protected getOptionLabel(options: Option[], value: unknown): string {
-    return options.find((option) => option.value === value)?.label ?? String(value ?? '');
-  }
-
   private loadRecommendedBlocksize(): Observable<unknown> {
-    const root = this.parentOrZvolId.split('/')[0];
+    const root = this.parentOrZvolId().split('/')[0];
 
     return this.api.call('pool.dataset.recommended_zvol_blocksize', [root]).pipe(
       tap((recommendedSize) => {
@@ -873,7 +866,7 @@ export class ZvolFormComponent implements OnInit {
     });
 
     let readonlyValue;
-    if (this.isNew) {
+    if (this.isNew()) {
       readonlyValue = inherit;
     } else {
       readonlyValue = zvol.readonly.value;
@@ -886,7 +879,7 @@ export class ZvolFormComponent implements OnInit {
     }
     this.form.controls.readonly.setValue(readonlyValue);
 
-    if (!this.isNew) {
+    if (!this.isNew()) {
       this.originalReadonlyValue = readonlyValue;
       this.updateVolsizeStateBasedOnReadonly(readonlyValue);
 
@@ -916,11 +909,6 @@ export class ZvolFormComponent implements OnInit {
 
   private getEffectiveReadonlyValue(readonlyValue: string): string {
     return readonlyValue === inherit ? this.inheritedReadonlyValue : readonlyValue;
-  }
-
-  private handleZvolCreateUpdate(dataset: Dataset): void {
-    this.isLoading.set(false);
-    this.slideInRef.close({ response: dataset });
   }
 
   private alignVolsizeToBlocksize(volsize: number, blocksize: number): number {

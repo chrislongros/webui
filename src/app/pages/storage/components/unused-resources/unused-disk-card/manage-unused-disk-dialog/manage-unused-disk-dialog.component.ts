@@ -1,14 +1,16 @@
+import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
+import { AsyncPipe } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   AbstractControl, FormBuilder, Validators, ReactiveFormsModule,
 } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import {
-  MAT_DIALOG_DATA, MatDialogRef, MatDialogTitle, MatDialogContent, MatDialogActions, MatDialogClose,
-} from '@angular/material/dialog';
 import { Router } from '@angular/router';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
+import {
+  TnButtonComponent, TnDialogShellComponent, TnFormFieldComponent, TnFormSectionComponent,
+  TnRadioComponent, TnRadioGroupComponent, TnSelectComponent,
+} from '@truenas/ui-components';
 import { groupBy } from 'lodash-es';
 import { Observable, of } from 'rxjs';
 import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
@@ -16,12 +18,8 @@ import { PoolStatus } from 'app/enums/pool-status.enum';
 import { Role } from 'app/enums/role.enum';
 import { buildNormalizedFileSize } from 'app/helpers/file-size.utils';
 import { Option, SelectOption } from 'app/interfaces/option.interface';
-import { IxFieldsetComponent } from 'app/modules/forms/ix-forms/components/ix-fieldset/ix-fieldset.component';
-import { IxRadioGroupComponent } from 'app/modules/forms/ix-forms/components/ix-radio-group/ix-radio-group.component';
-import { IxSelectComponent } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.component';
 import { WarningComponent } from 'app/modules/forms/ix-forms/components/warning/warning.component';
 import { IxValidatorsService } from 'app/modules/forms/ix-forms/services/ix-validators.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { AddToPoolType, ManageUnusedDiskDialogResource } from 'app/pages/storage/components/unused-resources/unused-disk-card/manage-unused-disk-dialog/manage-unused-disk-dialog.interface';
 
 @Component({
@@ -30,17 +28,16 @@ import { AddToPoolType, ManageUnusedDiskDialogResource } from 'app/pages/storage
   styleUrls: ['./manage-unused-disk-dialog.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatDialogTitle,
+    AsyncPipe,
+    TnDialogShellComponent,
+    TnFormFieldComponent,
+    TnSelectComponent,
     ReactiveFormsModule,
-    MatDialogContent,
     WarningComponent,
-    IxFieldsetComponent,
-    IxRadioGroupComponent,
-    IxSelectComponent,
-    MatDialogActions,
-    MatButton,
-    TestDirective,
-    MatDialogClose,
+    TnFormSectionComponent,
+    TnRadioGroupComponent,
+    TnRadioComponent,
+    TnButtonComponent,
     RequiresRolesDirective,
     TranslateModule,
   ],
@@ -51,13 +48,14 @@ export class ManageUnusedDiskDialog implements OnInit {
   private translate = inject(TranslateService);
   private validatorsService = inject(IxValidatorsService);
   cdr = inject(ChangeDetectorRef);
-  private dialogRef = inject<MatDialogRef<ManageUnusedDiskDialog>>(MatDialogRef);
-  resource = inject<ManageUnusedDiskDialogResource>(MAT_DIALOG_DATA);
+  protected dialogRef = inject<DialogRef<unknown, ManageUnusedDiskDialog>>(DialogRef);
+  resource = inject<ManageUnusedDiskDialogResource>(DIALOG_DATA);
   private destroyRef = inject(DestroyRef);
 
   protected readonly requiredRoles = [Role.DiskWrite];
 
-  readonly toPoolOptions$: Observable<SelectOption<AddToPoolType>[]> = of([
+  /** Held in a field, not rebuilt per change-detection pass: `tn-radio-group` tracks options by `value`. */
+  readonly toPoolOptions: SelectOption<AddToPoolType>[] = [
     {
       label: this.translate.instant('New Pool'),
       value: AddToPoolType.New,
@@ -65,7 +63,7 @@ export class ManageUnusedDiskDialog implements OnInit {
       label: this.translate.instant('Existing Pool'),
       value: AddToPoolType.Existing,
     },
-  ]);
+  ];
 
   readonly poolOptions$: Observable<Option[]> = of(
     this.resource.pools.filter((pool) => pool.status !== PoolStatus.Offline).map((pool) => ({

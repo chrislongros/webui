@@ -1,40 +1,43 @@
-<mat-card class="card" [ixUiSearch]="searchableElements.elements.topology">
-  <mat-card-header>
-    <h3 mat-card-title>
-      <span>
-        {{ 'VDEVs' | translate }}
-      </span>
+<tn-card class="card" [ixUiSearch]="searchableElements.elements.topology">
+  <h3 tnCardHeader class="tn-card__title">
+    <span>
+      {{ 'VDEVs' | translate }}
+    </span>
 
-      <tn-icon
-        name="help-circle-outline"
-        library="mdi"
-        class="pool-icon"
-        [tnTooltip]="vdevsHelpTooltip"
-      ></tn-icon>
+    <tn-icon
+      name="help-circle-outline"
+      library="mdi"
+      class="pool-icon"
+      [tnTooltip]="vdevsHelpTooltip"
+    ></tn-icon>
 
-      <ix-pool-card-icon [type]="iconType()" [tooltip]="iconTooltip()"></ix-pool-card-icon>
-    </h3>
+    <ix-pool-card-icon [type]="iconType()" [tooltip]="iconTooltip()"></ix-pool-card-icon>
+  </h3>
 
-    <button
-      mat-button
-      ixTest="manage-vdevs"
+  <ng-template tnCardFooterActions>
+    <tn-button
+      [testId]="'manage-vdevs'"
       [ixUiSearch]="searchableElements.elements.viewVdevs"
-      (click)="router.navigate(['/storage', this.poolState().id, 'vdevs'])"
-    >
-      {{ 'View VDEVs' | translate }}
-    </button>
-  </mat-card-header>
+      [label]="'View VDEVs' | translate"
+      (onClick)="router.navigate(['/storage', this.poolState().id, 'vdevs'])"
+    ></tn-button>
+  </ng-template>
 
-  <mat-card-content>
+  <div class="card-content">
     <div class="content-container">
-      @if (topologyState.data !== notAssignedDev) {
+      @if (topologyState.data.assigned) {
         <div class="vdev-line">
-          <b>{{ 'Data VDEVs' | translate }}</b>
+          <b>
+            {{ 'Data VDEVs' | translate }}
+            @if (showTierLabels()) {
+              <span class="tier-label">({{ 'Regular Tier' | translate }})</span>
+            }
+          </b>
           <div class="vdev-stats">
             @if (!!topologyWarningsState.data && !isPoolOffline()) {
               <span
                 class="warning"
-                [matTooltip]="topologyWarningsState.data"
+                [tnTooltip]="topologyWarningsState.data"
               >
                 <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
               </span>
@@ -45,84 +48,35 @@
               </span>
               <span class="offline-data-vdevs">{{ 'Offline VDEVs' | translate }}</span>
             } @else {
-              <span class="vdev-value">{{ topologyState.data }}</span>
+              <span class="vdev-value">{{ topologyState.data.text }}</span>
             }
           </div>
         </div>
       }
 
-      @if (topologyState.metadata !== notAssignedDev && !isPoolOffline()) {
-        <div class="vdev-line">
-          <b>{{ 'Metadata VDEVs' | translate }}</b>
-          <div class="vdev-stats">
-            @if (!!topologyWarningsState.metadata) {
-              <span class="warning" [matTooltip]="topologyWarningsState.metadata">
-                <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
-              </span>
-            }
-            <span class="vdev-value">{{ topologyState.metadata }}</span>
+      @for (row of otherVdevRows; track row.key) {
+        @if (topologyState[row.key].assigned && !isPoolOffline() && !(row.hidden && row.hidden())) {
+          <div class="vdev-line">
+            <b>
+              {{ row.titleKey | translate }}
+              @if (row.tierLabelKey && showTierLabels()) {
+                <span class="tier-label">({{ row.tierLabelKey | translate }})</span>
+              }
+            </b>
+            <div class="vdev-stats">
+              @if (!!topologyWarningsState[row.key]) {
+                <span class="warning" [tnTooltip]="topologyWarningsState[row.key]">
+                  <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
+                </span>
+              }
+              <span class="vdev-value">{{ topologyState[row.key].text }}</span>
+            </div>
           </div>
-        </div>
-      }
-
-      @if (topologyState.log !== notAssignedDev && !isPoolOffline()) {
-        <div class="vdev-line">
-          <b>{{ 'Log VDEVs' | translate }}</b>
-          <div class="vdev-stats">
-            @if (!!topologyWarningsState.log) {
-              <span class="warning" [matTooltip]="topologyWarningsState.log">
-                <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
-              </span>
-            }
-            <span class="vdev-value">{{ topologyState.log }}</span>
-          </div>
-        </div>
-      }
-
-      @if (topologyState.cache !== notAssignedDev && !isPoolOffline()) {
-        <div class="vdev-line">
-          <b>{{ 'Cache VDEVs' | translate }}</b>
-          <div class="vdev-stats">
-            @if (!!topologyWarningsState.cache) {
-              <span class="warning" [matTooltip]="topologyWarningsState.cache">
-                <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
-              </span>
-            }
-            <span class="vdev-value">{{ topologyState.cache }}</span>
-          </div>
-        </div>
-      }
-
-      @if (!isDraidLayoutDataVdevs && topologyState.spare !== notAssignedDev && !isPoolOffline()) {
-        <div class="vdev-line">
-          <b>{{ 'Spare VDEVs' | translate }}</b>
-          <div class="vdev-stats">
-            @if (!!topologyWarningsState.spare) {
-              <span class="warning" [matTooltip]="topologyWarningsState.spare">
-                <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
-              </span>
-            }
-            <span class="vdev-value">{{ topologyState.spare }}</span>
-          </div>
-        </div>
-      }
-
-      @if (topologyState.dedup !== notAssignedDev && !isPoolOffline()) {
-        <div class="vdev-line">
-          <b>{{ 'Dedup VDEVs' | translate }}</b>
-          <div class="vdev-stats">
-            @if (!!topologyWarningsState.dedup) {
-              <span class="warning" [matTooltip]="topologyWarningsState.dedup">
-                <tn-icon name="alert-circle" library="mdi" class="pool-icon icon-warning"></tn-icon>
-              </span>
-            }
-            <span class="vdev-value">{{ topologyState.dedup }}</span>
-          </div>
-        </div>
+        }
       }
 
       @if (noOtherVdevTypes()) {
-        <div class="vdev-line empty-vdev-state">
+        <div class="empty-vdev-state">
           <div class="empty-message">
             {{ 'Pool configuration complete.' | translate }}
           </div>
@@ -132,5 +86,5 @@
         </div>
       }
     </div>
-  </mat-card-content>
-</mat-card>
+  </div>
+</tn-card>

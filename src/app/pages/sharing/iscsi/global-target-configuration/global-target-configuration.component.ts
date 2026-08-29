@@ -1,33 +1,28 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit, signal, inject, DestroyRef } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, signal, inject, DestroyRef } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   FormBuilder, FormControl, Validators, ReactiveFormsModule, FormGroup,
 } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
 import { Store } from '@ngrx/store';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import {
-  forkJoin, of, take,
+  InputType,
+  TnCheckboxComponent,
+  TnChipInputComponent,
+  TnFormFieldComponent,
+  TnFormSectionComponent,
+  TnInputComponent,
+} from '@truenas/ui-components';
+import {
+  forkJoin, take,
 } from 'rxjs';
-import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import { Role } from 'app/enums/role.enum';
 import { RdmaProtocolName, ServiceName } from 'app/enums/service-name.enum';
 import { helptextIscsi } from 'app/helptext/sharing';
-import { IscsiGlobalConfigUpdate } from 'app/interfaces/iscsi-global-config.interface';
-import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
-import { IxCheckboxComponent } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.component';
-import { IxChipsComponent } from 'app/modules/forms/ix-forms/components/ix-chips/ix-chips.component';
-import { IxFieldsetComponent } from 'app/modules/forms/ix-forms/components/ix-fieldset/ix-fieldset.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
-import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
+import { IxFormHostForm } from 'app/modules/forms/ix-forms/components/ix-form/ix-form-host-form.directive';
+import { IxFormComponent, SubmitResult } from 'app/modules/forms/ix-forms/components/ix-form/ix-form.component';
 import { IxValidatorsService } from 'app/modules/forms/ix-forms/services/ix-validators.service';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
-import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 import { AppState } from 'app/store';
 import { selectIsHaLicensed } from 'app/store/ha-info/ha-info.selectors';
 import { checkIfServiceIsEnabled } from 'app/store/services/services.actions';
@@ -38,39 +33,35 @@ import { selectIsEnterprise } from 'app/store/system-info/system-info.selectors'
   templateUrl: './global-target-configuration.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    MatCardContent,
     ReactiveFormsModule,
-    IxFieldsetComponent,
-    IxInputComponent,
-    IxChipsComponent,
-    IxCheckboxComponent,
-    FormActionsComponent,
-    RequiresRolesDirective,
-    MatButton,
-    TestDirective,
+    IxFormComponent,
+    TnFormSectionComponent,
+    TnFormFieldComponent,
+    TnInputComponent,
+    TnChipInputComponent,
+    TnCheckboxComponent,
     TranslateModule,
-    ModalHeaderComponent,
   ],
 })
-export class GlobalTargetConfigurationComponent implements OnInit {
+export class GlobalTargetConfigurationComponent extends IxFormHostForm implements OnInit {
   private api = inject(ApiService);
   private fb = inject(FormBuilder);
-  private cdr = inject(ChangeDetectorRef);
   private store$ = inject<Store<AppState>>(Store);
-  private errorHandler = inject(ErrorHandlerService);
-  private formErrorHandler = inject(FormErrorHandlerService);
-  private snackbar = inject(SnackbarService);
   private translate = inject(TranslateService);
   private validatorsService = inject(IxValidatorsService);
   private destroyRef = inject(DestroyRef);
-  slideInRef = inject<SlideInRef<undefined, boolean>>(SlideInRef);
 
-  protected isLoading = signal(false);
-  isHaSystem = false;
+  protected readonly InputType = InputType;
+  protected readonly isHaSystem = signal(false);
   private originalBasename: string | null = null;
 
-  form = this.fb.nonNullable.group({
+  /**
+   * Last known ALUA value, surviving the control being removed on a non-HA system. The control
+   * itself only exists while HA is licensed — it must stay out of the update payload otherwise.
+   */
+  private aluaValue = false;
+
+  protected readonly form = this.fb.nonNullable.group({
     basename: ['', Validators.required],
     isns_servers: [[] as string[]],
     pool_avail_threshold: [null as number | null],
@@ -94,70 +85,51 @@ export class GlobalTargetConfigurationComponent implements OnInit {
     iser: helptextIscsi.config.iserTooltip,
   };
 
-  protected readonly requiredRoles = [Role.SharingIscsiGlobalWrite];
-
-  constructor() {
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(this.form.dirty);
-    });
-  }
+  readonly requiredRoles = [Role.SharingIscsiGlobalWrite];
 
   ngOnInit(): void {
-    this.loadFormValues();
+    // Wired before the load: `loadFormConfig`'s patch callback is replayed by `retryLoad`, so a
+    // subscription registered inside it would be re-registered on every retry.
     this.listenForHaStatus();
     this.checkForRdmaSupport();
     this.setupBasenameValidation();
-  }
 
-  onSubmit(): void {
-    this.isLoading.set(true);
-    const values = { ...this.form.value } as IscsiGlobalConfigUpdate;
-
-    this.api.call('iscsi.global.update', [values])
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        complete: () => {
-          this.isLoading.set(false);
-          this.store$.dispatch(checkIfServiceIsEnabled({ serviceName: ServiceName.Iscsi }));
-          this.slideInRef.close({ response: true });
-          this.snackbar.success(this.translate.instant('Settings saved.'));
-        },
-        error: (error: unknown) => {
-          this.isLoading.set(false);
-          this.formErrorHandler.handleValidationErrors(error, this.form);
-        },
-      });
-  }
-
-  private loadFormValues(): void {
-    this.isLoading.set(true);
-
-    this.api.call('iscsi.global.config').pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (config) => {
-        this.originalBasename = config.basename;
-        this.form.patchValue(config);
-        this.isLoading.set(false);
-      },
-      error: (error: unknown) => {
-        this.errorHandler.showErrorModal(error);
-        this.isLoading.set(false);
-      },
+    this.loadFormConfig(this.api.call('iscsi.global.config'), (config) => {
+      this.originalBasename = config.basename;
+      this.aluaValue = config.alua;
+      this.form.patchValue(config);
     });
   }
 
+  protected handleSubmit = (): SubmitResult => {
+    // `form.value` rather than the event's `allValues` (a raw value): `iser` is disabled on
+    // systems without RDMA support, and the update payload must not carry it there.
+    const values = { ...this.form.value };
+
+    return {
+      request$: this.api.call('iscsi.global.update', [values]),
+      successMessage: this.translate.instant('Settings saved.'),
+      onSuccess: () => {
+        this.store$.dispatch(checkIfServiceIsEnabled({ serviceName: ServiceName.Iscsi }));
+      },
+    };
+  };
+
   private listenForHaStatus(): void {
     this.store$.select(selectIsHaLicensed).pipe(takeUntilDestroyed(this.destroyRef)).subscribe((isHa) => {
-      this.isHaSystem = isHa;
+      this.isHaSystem.set(isHa);
 
       if (!isHa) {
+        // Remembered rather than dropped: the selector can emit after the config load (or after
+        // the user has toggled ALUA), and a later re-add would otherwise silently reset it.
+        this.aluaValue = this.form.controls.alua?.value ?? this.aluaValue;
         this.form.removeControl('alua');
+        return;
       }
 
-      if (isHa && !this.form.controls.alua) {
-        this.form.addControl('alua', new FormControl(false, { nonNullable: true }));
+      if (!this.form.controls.alua) {
+        this.form.addControl('alua', new FormControl(this.aluaValue, { nonNullable: true }));
       }
-
-      this.cdr.markForCheck();
     });
   }
 

@@ -1,12 +1,11 @@
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ActivatedRoute } from '@angular/router';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
-import { TnIconComponent } from '@truenas/ui-components';
+import { TnIconButtonHarness, TnIconComponent, TnTreeHarness } from '@truenas/ui-components';
 import { of } from 'rxjs';
+import { settleDeferredTree } from 'app/core/testing/utils/settle-deferred-tree.utils';
 import { VDevNestedDataNode } from 'app/interfaces/device-nested-data-node.interface';
 import { VDevItem } from 'app/interfaces/storage.interface';
-import { NestedTreeNodeComponent } from 'app/modules/ix-tree/components/nested-tree-node/nested-tree-node.component';
-import { TreeNodeComponent } from 'app/modules/ix-tree/components/tree-node/tree-node.component';
-import { TreeViewComponent } from 'app/modules/ix-tree/components/tree-view/tree-view.component';
 import { TopologyItemNodeComponent } from 'app/pages/storage/modules/vdevs/components/topology-item-node/topology-item-node.component';
 import { VDevGroupNodeComponent } from 'app/pages/storage/modules/vdevs/components/vdev-group-node/vdev-group-node.component';
 import { VDevsListComponent } from 'app/pages/storage/modules/vdevs/components/vdevs-list/vdevs-list.component';
@@ -459,30 +458,25 @@ describe('VDevsListComponent', () => {
     imports: [
       TopologyItemNodeComponent,
       VDevGroupNodeComponent,
-      TreeViewComponent,
-      TreeNodeComponent,
-      NestedTreeNodeComponent,
       TnIconComponent,
-    ],
-
-    providers: [
-      mockProvider(VDevsStore, {
-        selectedNode$: of(selectedNode),
-        isLoading$: of(false),
-        loadNodes: jest.fn(),
-        nodes$: of(nodes),
-        selectedBranch$: of(selectedBranch),
-      }),
     ],
   });
 
   beforeEach(() => {
     jest.spyOn(console, 'warn').mockImplementation();
+  });
+
+  it('shows the devices of the pool', async () => {
     spectator = createComponent({
-      props: {
-        poolId: 2,
-      },
+      props: { poolId: 2 },
       providers: [
+        mockProvider(VDevsStore, {
+          selectedNode$: of(selectedNode),
+          isLoading$: of(false),
+          loadNodes: jest.fn(),
+          nodes$: of(nodes),
+          selectedBranch$: of(selectedBranch),
+        }),
         {
           provide: ActivatedRoute,
           useValue: {
@@ -491,20 +485,90 @@ describe('VDevsListComponent', () => {
         },
       ],
     });
-  });
-
-  it('shows the devices of the pool', () => {
     spectator.detectChanges();
+    await settleDeferredTree(spectator.fixture);
     const vdevGroup = spectator.query('ix-vdev-group-node')!;
     const text = vdevGroup.querySelector('.caption-name')!;
     expect(text.textContent).toBe('Data VDEVs');
-    const button = spectator.query('.mat-mdc-button-touch-target')!;
-    button.dispatchEvent(new Event('click'));
-    expect(console.warn).toHaveBeenCalledWith('Tree is using conflicting node types which can cause unexpected behavior. Please use tree nodes of the same type (e.g. only flat or only nested). Current node type: "nested", new node type "flat".');
-    spectator.detectChanges();
     const treeNodes = spectator.queryAll('.cell-name');
     expect(treeNodes[0].textContent).toBe('MIRROR');
     expect(treeNodes[1].textContent).toBe('sdc');
     expect(treeNodes[2].textContent).toBe('sdd');
+
+    // The custom group toggle collapses the auto-expanded group. Collapsed children
+    // stay in the DOM (hidden via CSS) — assert the group's expansion state through
+    // the harness rather than element removal.
+    const loader = TestbedHarnessEnvironment.loader(spectator.fixture);
+    const groupLoader = await loader.getChildLoader('ix-vdev-group-node');
+    const groupToggle = await groupLoader.getHarness(TnIconButtonHarness);
+    const tree = await loader.getHarness(TnTreeHarness);
+    const [groupNode] = await tree.getNodes({ level: 0 });
+    expect(await groupNode.isExpanded()).toBe(true);
+    await groupToggle.click();
+    spectator.detectChanges();
+    expect(await groupNode.isExpanded()).toBe(false);
+  });
+
+  describe('auto-expand on descendant warning', () => {
+    // A minimal pool with a single mirror that contains one FAULTED disk. Without auto-expand
+    // the disk row stays hidden under the collapsed mirror; with auto-expand it should be
+    // rendered immediately after the store emits.
+    const faultedNodes = [
+      {
+        children: [
+          {
+            name: 'mirror-1',
+            type: 'MIRROR',
+            guid: 'mirror-1-guid',
+            status: 'DEGRADED',
+            children: [
+              {
+                name: 'faulted-disk',
+                type: 'DISK',
+                guid: 'faulted-disk-guid',
+                status: 'FAULTED',
+                disk: 'sde',
+                children: [],
+              },
+            ],
+            isRoot: true,
+          },
+        ],
+        group: 'Data VDEVs',
+        guid: 'data',
+      },
+    ] as VDevNestedDataNode[];
+
+    it('reveals a deeper FAULTED disk without requiring a click on the parent VDEV', async () => {
+      spectator = createComponent({
+        props: { poolId: 2 },
+        providers: [
+          mockProvider(VDevsStore, {
+            selectedNode$: of(null),
+            isLoading$: of(false),
+            loadNodes: jest.fn(),
+            nodes$: of(faultedNodes),
+            selectedBranch$: of(null),
+          }),
+          {
+            provide: ActivatedRoute,
+            useValue: { params: of({}), snapshot: { paramMap: { get: () => null } } },
+          },
+        ],
+      });
+      spectator.detectChanges();
+      await settleDeferredTree(spectator.fixture);
+
+      const faultedRow = spectator.queryAll('.cell-name')
+        .find((el) => el.textContent?.trim() === 'sde');
+      expect(faultedRow).toBeTruthy();
+      // The FAULTED disk's ancestors (group and mirror) are auto-expanded, so the
+      // disk row is not left hidden under a collapsed parent.
+      const tree = await TestbedHarnessEnvironment.loader(spectator.fixture).getHarness(TnTreeHarness);
+      const [group] = await tree.getNodes({ level: 0 });
+      const [mirror] = await tree.getNodes({ level: 1 });
+      expect(await group.isExpanded()).toBe(true);
+      expect(await mirror.isExpanded()).toBe(true);
+    });
   });
 });

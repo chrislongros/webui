@@ -1,10 +1,5 @@
 @if (hasSedSupport()) {
-<mat-card class="card">
-  <mat-card-header>
-    <h3 mat-card-title>{{ 'Hardware Disk Encryption' | translate }}</h3>
-  </mat-card-header>
-
-  <mat-card-content>
+  <tn-card padding="small" [title]="'Hardware Disk Encryption' | translate">
     <div class="details-item">
       <div class="label">{{ 'SED Password' | translate }}:</div>
       <div class="value">
@@ -14,34 +9,44 @@
         }}
       </div>
 
-      <a
+      <!--
+        These were anchors before the migration and are buttons now (they act, they don't
+        navigate to a URL), but keep the `link-` test-id prefix: the e2e suite locates them by
+        the resolved ids, so renaming has to happen there in the same change.
+      -->
+      <button
         *ixHasRole="requiredRoles"
-        ixTest="manage-sed-password"
+        class="link-action"
+        type="button"
+        tnTestIdType="link"
+        [tnTestId]="'manage-sed-password'"
         (click)="onManageSedPassword()"
       >
         {{ 'Manage SED Password' | translate }}
-      </a>
+      </button>
     </div>
 
     <div class="details-item">
       <div class="label">{{ 'Global SED Password' | translate }}:</div>
-        <div class="value">
-          {{ hasGlobalEncryption()
-            ? ('Password is set' | translate)
-            : ('Password is not set' | translate)
-          }}
-        </div>
+      <div class="value">
+        {{ hasGlobalEncryption()
+          ? ('Password is set' | translate)
+          : ('Password is not set' | translate)
+        }}
+      </div>
 
-        <a
-          *ixHasRole="requiredRoles"
-          ixNavigateAndHighlight
-          ixTest="manage-global-sed-password"
-          [navigateHash]="'sed-card'"
-          [navigateRoute]="['/system', 'advanced']"
-        >
-          {{ 'Manage Global SED Password' | translate }}
-        </a>
+      <button
+        *ixHasRole="requiredRoles"
+        ixNavigateAndHighlight
+        class="link-action"
+        type="button"
+        tnTestIdType="link"
+        [tnTestId]="'manage-global-sed-password'"
+        [navigateHash]="'sed-card'"
+        [navigateRoute]="['/system', 'advanced']"
+      >
+        {{ 'Manage Global SED Password' | translate }}
+      </button>
     </div>
-  </mat-card-content>
-</mat-card>
+  </tn-card>
 }

@@ -1,17 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, DestroyRef, input, inject } from '@angular/core';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
-import {
-  MatCard, MatCardHeader, MatCardTitle, MatCardContent,
-} from '@angular/material/card';
-import { MatDialog } from '@angular/material/dialog';
 import { Store } from '@ngrx/store';
 import { TranslateModule } from '@ngx-translate/core';
+import { TnCardComponent, TnDialog, TnTestIdDirective } from '@truenas/ui-components';
 import { filter, map, switchMap } from 'rxjs/operators';
 import { HasRoleDirective } from 'app/directives/has-role/has-role.directive';
 import { NavigateAndHighlightDirective } from 'app/directives/navigate-and-interact/navigate-and-highlight.directive';
 import { Role } from 'app/enums/role.enum';
 import { TopologyDisk } from 'app/interfaces/storage.interface';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   ManageDiskSedDialog,
@@ -25,19 +21,16 @@ import { selectIsEnterprise } from 'app/store/system-info/system-info.selectors'
   styleUrls: ['./hardware-disk-encryption.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    MatCardHeader,
-    MatCardTitle,
-    MatCardContent,
+    TnCardComponent,
     HasRoleDirective,
-    TestDirective,
+    TnTestIdDirective,
     NavigateAndHighlightDirective,
     TranslateModule,
   ],
 })
 export class HardwareDiskEncryptionComponent {
   private store$ = inject<Store<AppState>>(Store);
-  private matDialog = inject(MatDialog);
+  private tnDialog = inject(TnDialog);
   private api = inject(ApiService);
   private destroyRef = inject(DestroyRef);
 
@@ -47,7 +40,7 @@ export class HardwareDiskEncryptionComponent {
   protected readonly isEnterprise = toSignal(this.store$.select(selectIsEnterprise));
   protected readonly requiredRoles = [Role.DiskWrite];
 
-  hasSedSupport = computed(() => {
+  protected readonly hasSedSupport = computed(() => {
     return this.isEnterprise() || (this.hasDiskEncryption() || this.hasGlobalEncryption());
   });
 
@@ -63,10 +56,10 @@ export class HardwareDiskEncryptionComponent {
     ),
   );
 
-  onManageSedPassword(): void {
-    this.matDialog.open(ManageDiskSedDialog, {
+  protected onManageSedPassword(): void {
+    this.tnDialog.open(ManageDiskSedDialog, {
       data: this.topologyDisk().disk,
-    }).afterClosed()
+    }).closed
       .pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef))
       .subscribe();
   }

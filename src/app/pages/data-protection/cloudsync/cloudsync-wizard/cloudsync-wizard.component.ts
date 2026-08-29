@@ -1,22 +1,16 @@
 import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, forwardRef, Signal, viewChild, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, forwardRef, output, Signal, viewChild, inject,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatCardModule } from '@angular/material/card';
-import { MatStepperModule } from '@angular/material/stepper';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
+import { TnStepComponent, TnStepperComponent } from '@truenas/ui-components';
 import {
   BehaviorSubject, Observable, merge,
-  of,
 } from 'rxjs';
 import { cloudSyncProviderNameMap } from 'app/enums/cloudsync-provider.enum';
-import { Role } from 'app/enums/role.enum';
 import { CloudSyncTask, CloudSyncTaskUpdate } from 'app/interfaces/cloud-sync-task.interface';
 import { CloudSyncCredential } from 'app/interfaces/cloudsync-credential.interface';
-import {
-  UseIconsInStepperComponent,
-} from 'app/modules/layout/use-icons-in-stepper/use-icons-in-stepper.component';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { CloudSyncWhatAndWhenComponent } from 'app/pages/data-protection/cloudsync/cloudsync-wizard/steps/cloudsync-what-and-when/cloudsync-what-and-when.component';
@@ -31,16 +25,13 @@ import { CloudSyncProviderComponent } from './steps/cloudsync-provider/cloudsync
   imports: [
     CloudSyncProviderComponent,
     CloudSyncWhatAndWhenComponent,
-    ModalHeaderComponent,
-    MatCardModule,
-    MatStepperModule,
+    TnStepperComponent,
+    TnStepComponent,
     TranslateModule,
     AsyncPipe,
-    UseIconsInStepperComponent,
   ],
 })
 export class CloudSyncWizardComponent {
-  slideInRef = inject<SlideInRef<undefined, CloudSyncTask>>(SlideInRef);
   private api = inject(ApiService);
   private snackbarService = inject(SnackbarService);
   private cdr = inject(ChangeDetectorRef);
@@ -54,17 +45,22 @@ export class CloudSyncWizardComponent {
   readonly cloudSyncProvider: Signal<CloudSyncProviderComponent>
     = viewChild(forwardRef(() => CloudSyncProviderComponent));
 
-  protected readonly requiredRoles = [Role.CloudSyncWrite];
+  /** Fired on a successful submit when hosted in a `<tn-side-panel>` (true = saved). */
+  readonly closed = output<boolean>();
 
   isLoading$ = new BehaviorSubject(false);
   isProviderLoading$ = new BehaviorSubject(false);
   mergedLoading$: Observable<boolean> = merge(this.isLoading$, this.isProviderLoading$);
   existingCredential: CloudSyncCredential | undefined;
 
-  constructor() {
-    this.slideInRef.requireConfirmationWhen(() => of(
-      Boolean(this.whatAndWhen()?.form?.dirty || this.cloudSyncProvider()?.isDirty()),
-    ));
+  /** Host hook (`<tn-side-panel>` closeGuard) — dirty across either step. */
+  hasUnsavedChanges(): boolean {
+    return Boolean(this.whatAndWhen()?.form?.dirty || this.cloudSyncProvider()?.isDirty());
+  }
+
+  /** Whether the form is currently submitting; the host shows a progress bar while true. */
+  isBusy(): boolean {
+    return this.isLoading$.value || this.isProviderLoading$.value;
   }
 
   private createTask(payload: CloudSyncTaskUpdate): Observable<CloudSyncTask> {
@@ -93,10 +89,10 @@ export class CloudSyncWizardComponent {
     this.createTask(payload).pipe(
       takeUntilDestroyed(this.destroyRef),
     ).subscribe({
-      next: (response) => {
+      next: () => {
         this.snackbarService.success(this.translate.instant('Task created'));
         this.isLoading$.next(false);
-        this.slideInRef.close({ response });
+        this.closed.emit(true);
 
         this.cdr.markForCheck();
       },

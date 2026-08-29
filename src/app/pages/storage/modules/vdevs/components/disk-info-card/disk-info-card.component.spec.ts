@@ -1,11 +1,10 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatDialog } from '@angular/material/dialog';
 import { ActivatedRoute } from '@angular/router';
 import {
   byText, createComponentFactory, Spectator, mockProvider,
 } from '@ngneat/spectator/jest';
+import { TnButtonHarness, TnDialog } from '@truenas/ui-components';
 import { MockComponents } from 'ng-mocks';
 import { of } from 'rxjs';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
@@ -16,7 +15,7 @@ import { TopologyDisk } from 'app/interfaces/storage.interface';
 import { CopyButtonComponent } from 'app/modules/buttons/copy-button/copy-button.component';
 import { FileSizePipe } from 'app/modules/pipes/file-size/file-size.pipe';
 import { OrNotAvailablePipe } from 'app/modules/pipes/or-not-available/or-not-available.pipe';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
 import { DiskFormComponent } from 'app/pages/storage/modules/disks/components/disk-form/disk-form.component';
 import { ReplaceDiskDialog } from 'app/pages/storage/modules/vdevs/components/disk-info-card/replace-disk-dialog/replace-disk-dialog.component';
@@ -50,18 +49,20 @@ describe('DiskInfoCardComponent', () => {
     ],
     providers: [
       mockAuth(),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         open: jest.fn(() => SlideInResult.empty()),
       }),
       mockProvider(ActivatedRoute, {
         snapshot: { params: { poolId: '1' } },
       }),
-      mockProvider(MatDialog, {
+      mockProvider(TnDialog, {
         open: jest.fn(() => ({
-          afterClosed: () => of(),
+          closed: of(),
         })),
       }),
-      mockProvider(VDevsStore),
+      // `reloadList` is a ComponentStore effect assigned at construction, so it is not on the
+      // prototype for mockProvider to auto-stub.
+      mockProvider(VDevsStore, { reloadList: jest.fn() }),
     ],
   });
 
@@ -103,18 +104,31 @@ describe('DiskInfoCardComponent', () => {
     expect(descriptionItem.nextElementSibling).toHaveText('N/A');
   });
 
-  it('opens slide to edit Disk when clicks Edit button', async () => {
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Edit' }));
+  it('opens the disk edit form in a side panel when clicks Edit button', async () => {
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
     await editButton.click();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(DiskFormComponent, { data: disk });
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(DiskFormComponent, {
+      title: 'Edit Disk',
+      inputs: { diskToEdit: disk },
+    });
+  });
+
+  it('reloads the vdev list after the disk edit form is saved', async () => {
+    jest.spyOn(spectator.inject(FormSidePanelService), 'open')
+      .mockReturnValue(SlideInResult.success(true));
+
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
+    await editButton.click();
+
+    expect(spectator.inject(VDevsStore).reloadList).toHaveBeenCalled();
   });
 
   it('opens a ReplaceDiskDialogComponent when clicks Replace button', async () => {
-    const replaceButton = await loader.getHarness(MatButtonHarness.with({ text: 'Replace' }));
+    const replaceButton = await loader.getHarness(TnButtonHarness.with({ label: 'Replace' }));
     await replaceButton.click();
 
-    expect(spectator.inject(MatDialog).open).toHaveBeenCalledWith(ReplaceDiskDialog, {
+    expect(spectator.inject(TnDialog).open).toHaveBeenCalledWith(ReplaceDiskDialog, {
       data: {
         poolId: 1,
         guid: '11254578662959974657',

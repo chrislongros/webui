@@ -3,14 +3,6 @@ import { tnIconMarker } from '@truenas/ui-components';
 import { EmptyType } from 'app/enums/empty-type.enum';
 import { EmptyConfig } from 'app/interfaces/empty-config.interface';
 
-export const storageEmptyConfig = {
-  type: EmptyType.NoPageData,
-  icon: tnIconMarker('dns', 'material'),
-  large: true,
-  title: T('No Pools'),
-  message: T('Storage features in TrueNAS require at least one Pool to exist. <br>\nA Pool is a group of disks working together to store and protect your data. <br>\nOnce you have a pool, this page will provide an overview of your pool’s health and status.'),
-} as EmptyConfig;
-
 export const datasetEmptyConfig = {
   type: EmptyType.NoPageData,
   large: true,
@@ -75,27 +67,6 @@ export const smbCardEmptyConfig = {
   icon: tnIconMarker('smb-share', 'custom'),
   large: true,
   message: T('<p>Well supported by all major operating systems, allows for easy authentication and authorization.</p>\n<p>Choose SMB for easy file sharing across mixed operating systems, especially in home or office networks.</p>'),
-} as EmptyConfig;
-
-export const nfsCardEmptyConfig = {
-  type: EmptyType.NoPageData,
-  icon: tnIconMarker('nfs-share', 'custom'),
-  large: true,
-  message: T('<p>Optimized for Linux and Unix systems, offering deeper integration in those environments. </p>\n<p>Choose NFS if you\'re working primarily with Linux servers or need efficient file access in Unix-based workflows.</p>'),
-} as EmptyConfig;
-
-export const iscsiCardEmptyConfig = {
-  type: EmptyType.NoPageData,
-  icon: tnIconMarker('iscsi-share', 'custom'),
-  large: true,
-  message: T('<p>Raw block storage over the network, appearing as a local disk on the client.</p>\n<p>Ideal for virtual machines or applications that require direct disk-level access.</p>'),
-} as EmptyConfig;
-
-export const nvmeOfEmptyConfig = {
-  type: EmptyType.NoPageData,
-  icon: tnIconMarker('nvme-share', 'custom'),
-  large: true,
-  message: T('<p>Raw block storage using NVMe over Fabrics (e.g. NVMe/TCP), appearing as a local disk on the client.</p>\n<p>Compared to iSCSI, NVMe-oF offers significantly lower latency and higher throughput.</p>'),
 } as EmptyConfig;
 
 export const installedAppsEmptyConfig = {

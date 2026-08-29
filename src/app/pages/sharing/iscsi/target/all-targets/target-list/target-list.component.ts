@@ -1,11 +1,15 @@
-import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, effect, input, OnInit, output, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatToolbarRow } from '@angular/material/toolbar';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, computed, inject, input, output, signal,
+} from '@angular/core';
+import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent } from '@truenas/ui-components';
+import {
+  TnButtonComponent, TnCardComponent, TnCardHeaderActionsDirective, TnCellDefDirective,
+  TnHeaderCellDefDirective, TnIconButtonComponent, TnTableColumnDirective, TnTableComponent,
+  TnTablePagerComponent, TnTestIdDirective,
+  type TnSortEvent,
+} from '@truenas/ui-components';
+import { switchMap } from 'rxjs';
 import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
 import { IscsiTargetMode, iscsiTargetModeNames } from 'app/enums/iscsi.enum';
@@ -13,20 +17,12 @@ import { Role } from 'app/enums/role.enum';
 import { IscsiTarget } from 'app/interfaces/iscsi.interface';
 import { EmptyService } from 'app/modules/empty/empty.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { AsyncDataProvider } from 'app/modules/ix-table/classes/async-data-provider/async-data-provider';
-import { IxTableComponent } from 'app/modules/ix-table/components/ix-table/ix-table.component';
-import { templateColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-template/ix-cell-template.component';
-import { textColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-text/ix-cell-text.component';
-import { IxTableBodyComponent } from 'app/modules/ix-table/components/ix-table-body/ix-table-body.component';
-import { IxTableHeadComponent } from 'app/modules/ix-table/components/ix-table-head/ix-table-head.component';
-import { IxTablePagerComponent } from 'app/modules/ix-table/components/ix-table-pager/ix-table-pager.component';
-import { IxTableCellDirective } from 'app/modules/ix-table/directives/ix-table-cell.directive';
-import { IxTableEmptyDirective } from 'app/modules/ix-table/directives/ix-table-empty.directive';
-import { SortDirection } from 'app/modules/ix-table/enums/sort-direction.enum';
-import { createTable } from 'app/modules/ix-table/utils';
-import { FakeProgressBarComponent } from 'app/modules/loader/components/fake-progress-bar/fake-progress-bar.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
+import { AsyncDataProvider } from 'app/modules/tn-table/classes/async-data-provider/async-data-provider';
+import { SortDirection } from 'app/modules/tn-table/enums/sort-direction.enum';
+import {
+  dataProviderLoading, dataProviderRows, mapTnSortToTableSort, toUniqueRowTag,
+} from 'app/modules/tn-table/utils';
 import { targetListElements } from 'app/pages/sharing/iscsi/target/all-targets/target-list/target-list.elements';
 import { TargetFormComponent } from 'app/pages/sharing/iscsi/target/target-form/target-form.component';
 
@@ -36,29 +32,25 @@ import { TargetFormComponent } from 'app/pages/sharing/iscsi/target/target-form/
   styleUrls: ['./target-list.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    FakeProgressBarComponent,
-    MatToolbarRow,
+    TnCardComponent,
+    TnCardHeaderActionsDirective,
     BasicSearchComponent,
     RequiresRolesDirective,
-    MatButton,
-    TestDirective,
-    MatCardContent,
-    IxTableComponent,
-    IxTableEmptyDirective,
-    IxTableHeadComponent,
-    IxTableBodyComponent,
-    IxTablePagerComponent,
-    TranslateModule,
-    AsyncPipe,
-    TnIconComponent,
+    TnButtonComponent,
+    TnTestIdDirective,
     UiSearchDirective,
-    IxTableCellDirective,
+    TnTableComponent,
+    TnTableColumnDirective,
+    TnHeaderCellDefDirective,
+    TnCellDefDirective,
+    TnIconButtonComponent,
+    TnTablePagerComponent,
+    TranslateModule,
   ],
 })
 export class TargetListComponent implements OnInit {
-  emptyService = inject(EmptyService);
-  private slideIn = inject(SlideIn);
+  protected emptyService = inject(EmptyService);
+  private formPanel = inject(FormSidePanelService);
   private translate = inject(TranslateService);
   private cdr = inject(ChangeDetectorRef);
   private destroyRef = inject(DestroyRef);
@@ -66,6 +58,12 @@ export class TargetListComponent implements OnInit {
   readonly toggleShowMobileDetails = output<boolean>();
   readonly dataProvider = input.required<AsyncDataProvider<IscsiTarget>>();
   readonly targets = input<IscsiTarget[]>();
+
+  protected readonly rows = dataProviderRows(this.dataProvider);
+  protected readonly isLoading = dataProviderLoading(this.dataProvider);
+  protected readonly emptyType = toSignal(
+    toObservable(this.dataProvider).pipe(switchMap((provider) => provider.emptyType$)),
+  );
 
   protected readonly searchableElements = targetListElements;
 
@@ -77,48 +75,24 @@ export class TargetListComponent implements OnInit {
 
   searchQuery = signal('');
 
-  columns = createTable<IscsiTarget>([
-    textColumn({
-      title: this.translate.instant('Name'),
-      propertyName: 'name',
-    }),
-    textColumn({
-      title: this.translate.instant('Alias'),
-      propertyName: 'alias',
-    }),
-    textColumn({
-      title: this.translate.instant('Mode'),
-      propertyName: 'mode',
-      hidden: true,
-      getValue: (row) => {
-        return this.translate.instant(iscsiTargetModeNames.get(row.mode) || row.mode) || '-';
-      },
-    }),
-    templateColumn({
-      cssClass: 'view-details-column',
-    }),
-  ], {
-    uniqueRowTag: (row) => 'iscsi-target-' + row.name,
-    ariaLabels: (row) => [row.name, this.translate.instant('Target')],
+  // The Mode column only appears once a non-iSCSI (FC-capable) target exists.
+  protected readonly displayedColumns = computed<string[]>(() => {
+    const columns = ['name', 'alias'];
+    if (this.targets()?.some((target) => target.mode !== IscsiTargetMode.Iscsi)) {
+      columns.push('mode');
+    }
+    columns.push('actions');
+    return columns;
   });
 
-  constructor() {
-    effect(() => {
-      if (this.targets()?.some((target) => target.mode !== IscsiTargetMode.Iscsi)) {
-        this.columns = this.columns.map((column) => {
-          if (column.propertyName === 'mode') {
-            return {
-              ...column,
-              hidden: false,
-            };
-          }
+  protected readonly trackByTargetId = (_index: number, row: IscsiTarget): number => row.id;
 
-          return column;
-        });
-        this.cdr.detectChanges();
-        this.cdr.markForCheck();
-      }
-    });
+  protected uniqueRowTag(row: IscsiTarget): string {
+    return toUniqueRowTag('iscsi-target-' + row.name);
+  }
+
+  protected modeLabel(row: IscsiTarget): string {
+    return this.translate.instant(iscsiTargetModeNames.get(row.mode) || row.mode) || '-';
   }
 
   ngOnInit(): void {
@@ -129,7 +103,17 @@ export class TargetListComponent implements OnInit {
     });
   }
 
-  expanded(target: IscsiTarget): void {
+  protected onRowClick(row: IscsiTarget): void {
+    const isCurrentlyExpanded = this.dataProvider().expandedRow === row;
+    if (isCurrentlyExpanded) {
+      this.expanded(null);
+    } else {
+      this.dataProvider().expandedRow = row;
+      this.expanded(row);
+    }
+  }
+
+  private expanded(target: IscsiTarget | null): void {
     this.toggleShowMobileDetails.emit(!!target);
     if (!target) {
       this.dataProvider().expandedRow = null;
@@ -137,7 +121,7 @@ export class TargetListComponent implements OnInit {
     }
   }
 
-  setDefaultSort(): void {
+  private setDefaultSort(): void {
     this.dataProvider().setSorting({
       active: 0,
       direction: SortDirection.Asc,
@@ -145,15 +129,21 @@ export class TargetListComponent implements OnInit {
     });
   }
 
-  doAdd(): void {
-    this.slideIn.open(TargetFormComponent, { wide: true })
-      .onSuccess((response) => {
-        this.dataProvider().expandedRow = response;
-        this.dataProvider().load();
-      }, this.destroyRef);
+  protected onSortChange(event: TnSortEvent): void {
+    this.dataProvider().setSorting(mapTnSortToTableSort<IscsiTarget>(event, this.displayedColumns()));
   }
 
-  onListFiltered(query: string): void {
+  protected doAdd(): void {
+    // The created target's expand + reload is driven by `iscsiService.refreshData(...)` (emitted
+    // from the form's onSuccess) which `all-targets` listens for and reloads the shared
+    // dataProvider — so no explicit reload here (it would double-load).
+    this.formPanel.open(TargetFormComponent, {
+      title: this.translate.instant('Add ISCSI Target'),
+      wide: true,
+    });
+  }
+
+  protected onListFiltered(query: string): void {
     this.searchQuery.set(query);
     this.dataProvider().setFilter({ query, columnKeys: ['name'] });
   }

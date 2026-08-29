@@ -1,18 +1,11 @@
-mat-card {
-  height: 100%;
-}
+@import '../card-flush-table';
+@import '../card-service-toggle';
 
-.card-title {
-  align-items: center;
-  display: flex;
+@include card-flush-table;
+@include card-service-toggle;
 
-  tn-icon {
-    margin-left: 5px;
-  }
-}
-
-:host ::ng-deep {
-  .tight-actions {
-    width: 80px;
-  }
+.card-title-link {
+  color: inherit;
+  display: inline-flex;
+  text-decoration: none;
 }

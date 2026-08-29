@@ -60,7 +60,7 @@ const logEntry = {
   success: true,
 } as AuditEntry;
 
-const yamlContent = `Success: True
+const yamlContent = `Success: true
 Logon ID: '0'
 Logon Type: 3
 Local Address: ipv4:10.238.238.168:445
@@ -116,7 +116,7 @@ describe('EventDataDetailsCardComponent', () => {
   });
 
   it('renders Event Data in Yaml format', () => {
-    const cardContent = spectator.query('mat-card pre')!;
+    const cardContent = spectator.query('tn-card pre')!;
     expect(cardContent.textContent).toBe(yamlContent);
   });
 

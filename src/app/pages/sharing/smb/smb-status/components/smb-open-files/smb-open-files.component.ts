@@ -1,20 +1,22 @@
-import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, OnChanges, inject } from '@angular/core';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatToolbarRow } from '@angular/material/toolbar';
+import {
+  ChangeDetectionStrategy, Component, computed, input, OnChanges, inject, signal,
+} from '@angular/core';
+import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { of } from 'rxjs';
+import {
+  TnCardComponent, TnCardHeaderDirective, TnCellDefDirective, TnHeaderCellDefDirective, TnTableColumnDirective,
+  TnTableComponent, TnTablePagerComponent,
+  TnTestIdDirective,
+} from '@truenas/ui-components';
+import { of, switchMap } from 'rxjs';
 import { IxSimpleChanges } from 'app/interfaces/simple-changes.interface';
 import { SmbLockInfo, SmbOpenInfo } from 'app/interfaces/smb-status.interface';
 import { EmptyService } from 'app/modules/empty/empty.service';
-import { AsyncDataProvider } from 'app/modules/ix-table/classes/async-data-provider/async-data-provider';
-import { IxTableComponent } from 'app/modules/ix-table/components/ix-table/ix-table.component';
-import { textColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-text/ix-cell-text.component';
-import { IxTableBodyComponent } from 'app/modules/ix-table/components/ix-table-body/ix-table-body.component';
-import { IxTableHeadComponent } from 'app/modules/ix-table/components/ix-table-head/ix-table-head.component';
-import { IxTablePagerComponent } from 'app/modules/ix-table/components/ix-table-pager/ix-table-pager.component';
-import { IxTableEmptyDirective } from 'app/modules/ix-table/directives/ix-table-empty.directive';
-import { createTable } from 'app/modules/ix-table/utils';
+import { AsyncDataProvider } from 'app/modules/tn-table/classes/async-data-provider/async-data-provider';
+import { column } from 'app/modules/tn-table/column-configs';
+import {
+  createTable, dataProviderLoading, dataProviderRows, toDisplayedColumns, toUniqueRowTag,
+} from 'app/modules/tn-table/utils';
 
 @Component({
   selector: 'ix-smb-open-files',
@@ -22,16 +24,15 @@ import { createTable } from 'app/modules/ix-table/utils';
   styleUrls: ['./smb-open-files.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    MatToolbarRow,
-    MatCardContent,
-    IxTableComponent,
-    IxTableEmptyDirective,
-    IxTableHeadComponent,
-    IxTableBodyComponent,
-    IxTablePagerComponent,
+    TnCardComponent,
+    TnCardHeaderDirective,
+    TnTestIdDirective,
+    TnTableComponent,
+    TnTableColumnDirective,
+    TnHeaderCellDefDirective,
+    TnCellDefDirective,
+    TnTablePagerComponent,
     TranslateModule,
-    AsyncPipe,
   ],
 })
 export class SmbOpenFilesComponent implements OnChanges {
@@ -43,31 +44,55 @@ export class SmbOpenFilesComponent implements OnChanges {
     return Object.values(this.lock()?.opens || []);
   });
 
-  dataProvider: AsyncDataProvider<SmbOpenInfo>;
-  columns = createTable<SmbOpenInfo>([
-    textColumn({
+  // The provider is rebuilt whenever the lock input changes, so it is held in a
+  // signal and adapted via the Signal<provider> helper overload (see target-list).
+  dataProvider = signal(new AsyncDataProvider<SmbOpenInfo>(of([] as SmbOpenInfo[])));
+  protected readonly rows = dataProviderRows(this.dataProvider);
+  protected readonly isLoading = dataProviderLoading(this.dataProvider);
+  protected readonly emptyType = toSignal(
+    toObservable(this.dataProvider).pipe(switchMap((provider) => provider.emptyType$)),
+  );
+
+  protected readonly columns = signal(createTable<SmbOpenInfo>([
+    column({
       title: this.translate.instant('Server'),
       propertyName: 'server_id',
       getValue: (row) => {
         return Object.values(row.server_id).join(':');
       },
     }),
-    textColumn({
+    column({
       title: this.translate.instant('Username'),
       propertyName: 'uid',
       getValue: (row) => {
         return `${row.username} (${row.uid})`;
       },
     }),
-    textColumn({ title: this.translate.instant('Opened at'), propertyName: 'opened_at' }),
-  ], {
-    uniqueRowTag: (row) => `smb-open-file-${row.username}-${row.uid}`,
-    ariaLabels: (row) => [row.username, this.translate.instant('SMB Open File')],
-  });
+    column({ title: this.translate.instant('Opened at'), propertyName: 'opened_at' }),
+  ]));
+
+  protected readonly displayedColumns = computed(() => toDisplayedColumns(this.columns()));
+
+  protected readonly trackByOpenFile = (_index: number, row: SmbOpenInfo): string => {
+    return `${row.username}-${row.uid}`;
+  };
+
+  protected formatServer(row: SmbOpenInfo): string {
+    return Object.values(row.server_id).join(':');
+  }
+
+  protected formatUsername(row: SmbOpenInfo): string {
+    return `${row.username} (${row.uid})`;
+  }
+
+  protected uniqueRowTag(row: SmbOpenInfo): string {
+    return toUniqueRowTag(`smb-open-file-${row.username}-${row.uid}`);
+  }
 
   private createProvider(): void {
-    this.dataProvider = new AsyncDataProvider(of(this.files()));
-    this.dataProvider.load();
+    const provider = new AsyncDataProvider(of(this.files()));
+    this.dataProvider.set(provider);
+    provider.load();
   }
 
   ngOnChanges(changes: IxSimpleChanges<this>): void {

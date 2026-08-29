@@ -1,23 +1,8 @@
-<mat-card class="card">
-  <mat-card-header>
-    <h3 mat-card-title>
-      @if (isFilesystem()) {
-        {{ 'Space Management' | translate }}
-      }
-      @if (isZvol()) {
-        {{ 'Zvol Space Management' | translate }}
-      }
-    </h3>
-    @if (!isZvol()) {
-      <button
-        *ixRequiresRoles="requiredRoles"
-        mat-button
-        ixTest="edit-quotas"
-        (click)="editDataset()"
-      >{{ 'Edit' | translate }}</button>
-    }
-  </mat-card-header>
-  <mat-card-content>
+<tn-card
+  padding="small"
+  [title]="isZvol() ? ('Zvol Space Management' | translate) : ('Space Management' | translate)"
+  [secondaryAction]="editAction()"
+>
     <ix-space-management-chart [dataset]="dataset()"></ix-space-management-chart>
 
     <div class="chart-extra">
@@ -71,16 +56,32 @@
       <div class="details-item">
         <div class="label">
           @if (isFilesystem()) {
-            {{ 'Available Space' | translate }}:
+            @if (tierEnabled()) {
+              {{ 'Available to Dataset (Regular Tier)' | translate }}:
+            } @else {
+              {{ 'Available Space' | translate }}:
+            }
           }
           @if (isZvol()) {
-            {{ 'Space Available to Zvol' | translate }}:
+            @if (tierEnabled()) {
+              {{ 'Available to Zvol (Regular Tier)' | translate }}:
+            } @else {
+              {{ 'Space Available to Zvol' | translate }}:
+            }
           }
         </div>
         <div class="value">
           {{ dataset().available.parsed | ixFileSize }}
         </div>
       </div>
+      @if (showPerformanceTierAvailable()) {
+        <div class="details-item">
+          <div class="label">{{ 'Pool Performance Tier Available' | translate }}:</div>
+          <div class="value">
+            {{ performanceTierAvailable() | ixFileSize }}
+          </div>
+        </div>
+      }
       @if ((isFilesystem() && hasQuota()) || hasRefQuota()) {
         <div class="details-item">
           <div class="label">{{ 'Applied Dataset Quota' | translate }}:</div>
@@ -111,7 +112,8 @@
             }}
           </div>
           <a
-            [ixTest]="[inheritedQuotasDataset.id, 'go-to-dataset']"
+            tnTestIdType="link"
+            [tnTestId]="[inheritedQuotasDataset.id, 'go-to-dataset']"
             [routerLink]="['/', 'datasets', inheritedQuotasDataset.id]"
           >
             {{ 'Go To Dataset' }}
@@ -141,7 +143,8 @@
           }
           @if (checkQuotas()) {
             <a
-              [ixTest]="[dataset().id, 'manage-user-quotas']"
+              tnTestIdType="link"
+              [tnTestId]="[dataset().id, 'manage-user-quotas']"
               [routerLink]="['/', 'datasets', dataset().id, 'user-quotas']"
               [ixUiSearch]="searchableElements.elements.manageUserQuotas"
             >
@@ -168,7 +171,8 @@
         }
         @if (checkQuotas()) {
           <a
-            [ixTest]="[dataset().id, 'manage-group-quotas']"
+            tnTestIdType="link"
+            [tnTestId]="[dataset().id, 'manage-group-quotas']"
             [routerLink]="['/', 'datasets', dataset().id, 'group-quotas']"
             [ixUiSearch]="searchableElements.elements.manageGroupQuotas"
           >
@@ -178,7 +182,6 @@
       </div>
     </div>
   }
-  </mat-card-content>
-</mat-card>
+</tn-card>
 
 

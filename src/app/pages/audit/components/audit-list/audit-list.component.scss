@@ -1,41 +1,39 @@
 @import 'scss-imports/variables';
 @import 'mixins/layout';
+@import 'mixins/text';
 
-:host ::ng-deep .sticky-header {
-  height: inherit;
-  min-height: 48px;
-  top: 50px;
+.cell-clamp {
+  @include line-clamp(2);
+}
 
-  @media(max-width: $breakpoint-md) {
-    position: static;
-  }
+.user-avatar,
+.event-data {
+  align-items: center;
+  display: flex;
 
-  >thead {
-    align-items: center;
-    display: flex;
-    width: 100%;
-
-    th {
-      align-items: center;
-      display: flex;
-    }
+  // The line-clamp mixin wraps text in -webkit-inline-box, whose bottom edge
+  // sits ~3px below the text baseline. With `align-items: center` the clamped
+  // span ends up nudged down relative to the leading icon/avatar; the negative
+  // bottom margin re-centers it. Switching to baseline alignment offsets the
+  // icon instead, so this targeted offset is the lowest-blast-radius fix.
+  .cell-clamp {
+    margin: 0 0 -3px;
   }
 }
 
 .event-data {
-  align-items: center;
-  display: flex;
   gap: 8px;
-  margin-top: -5px;
 
-  tn-icon {
+  .status-icon {
+    height: 15px;
+    min-height: 15px;
+    min-width: 15px;
     position: relative;
     top: 2px;
-    min-width: 15px;
-    min-height: 15px;
+    width: 15px;
 
     &.error-color {
-      color: var(--red);
+      color: var(--tn-red);
     }
   }
 }

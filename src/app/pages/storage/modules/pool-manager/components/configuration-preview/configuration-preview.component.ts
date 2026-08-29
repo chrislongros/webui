@@ -1,9 +1,7 @@
 import { AsyncPipe, KeyValuePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
-import {
-  MatCard, MatCardHeader, MatCardTitle, MatCardContent,
-} from '@angular/material/card';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
+import { TnCardComponent } from '@truenas/ui-components';
 import { omitBy } from 'lodash-es';
 import { map } from 'rxjs';
 import { VDevType, vdevTypeLabels } from 'app/enums/v-dev-type.enum';
@@ -23,10 +21,7 @@ import {
   styleUrls: ['./configuration-preview.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    MatCardHeader,
-    MatCardTitle,
-    MatCardContent,
+    TnCardComponent,
     TranslateModule,
     CastPipe,
     FileSizePipe,
@@ -45,19 +40,13 @@ export class ConfigurationPreviewComponent {
   protected readonly EncryptionType = EncryptionType;
 
   protected name$ = this.store.name$;
-  protected encryption$ = this.store.encryption$;
   protected encryptionType$ = this.store.encryptionType$;
 
   protected topology$ = this.store.topology$.pipe(
     map((topology) => {
-      // Remove empty vdevs and spare vdevs if using DRAID layout
-      return omitBy(topology, (value, key) => {
-        if ((key as VDevType) === VDevType.Spare && this.store.isUsingDraidLayout(topology)) {
-          return true;
-        }
-
-        return value.vdevs.length === 0;
-      });
+      // Remove empty vdevs. Dedicated spares are allowed alongside dRAID data
+      // vdevs (NAS-140629), so they are shown in the preview when present.
+      return omitBy(topology, (value) => value.vdevs.length === 0);
     }),
   );
 

@@ -1,24 +1,20 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { Spectator } from '@ngneat/spectator';
 import { createComponentFactory } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
+import { TnButtonHarness, TnTableHarness } from '@truenas/ui-components';
+import { MockApiService } from 'app/core/testing/classes/mock-api.service';
 import { mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
 import { SmbLockInfo, SmbOpenInfo } from 'app/interfaces/smb-status.interface';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { IxTableHarness } from 'app/modules/ix-table/components/ix-table/ix-table.harness';
-import {
-  IxTableColumnsSelectorComponent,
-} from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import { IxTableDetailsRowDirective } from 'app/modules/ix-table/directives/ix-table-details-row.directive';
 import { SmbLockListComponent } from 'app/pages/sharing/smb/smb-status/components/smb-lock-list/smb-lock-list.component';
 import { selectPreferences } from 'app/store/preferences/preferences.selectors';
 
 describe('SmbLockListComponent', () => {
   let spectator: Spectator<SmbLockListComponent>;
   let loader: HarnessLoader;
-  let table: IxTableHarness;
+  let table: TnTableHarness;
 
   const locks = [
     {
@@ -67,8 +63,6 @@ describe('SmbLockListComponent', () => {
     component: SmbLockListComponent,
     imports: [
       BasicSearchComponent,
-      IxTableColumnsSelectorComponent,
-      IxTableDetailsRowDirective,
     ],
     providers: [
       mockApi([
@@ -88,18 +82,18 @@ describe('SmbLockListComponent', () => {
   beforeEach(async () => {
     spectator = createComponent();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    table = await loader.getHarness(IxTableHarness);
+    table = await loader.getHarness(TnTableHarness);
   });
 
   it('should show table rows', async () => {
-    const expectedRows = [
-      [
-        'Path',
-        'Filename',
-        'File ID',
-        'Open Files',
-        'Num Pending Deletes',
-      ],
+    expect(await table.getHeaderTexts()).toEqual([
+      'Path',
+      'Filename',
+      'File ID',
+      'Open Files',
+      'Num Pending Deletes',
+    ]);
+    expect(await table.getAllRowTexts()).toEqual([
       [
         '/mnt/APPS/turtles',
         '.',
@@ -107,15 +101,28 @@ describe('SmbLockListComponent', () => {
         '4 open files',
         '0',
       ],
-    ];
+    ]);
+  });
 
-    const cells = await table.getCellTexts();
-    expect(cells).toEqual(expectedRows);
+  it('sorts File ID by each numeric part, not by the joined text', async () => {
+    spectator.inject(MockApiService).mockCall('smb.status', [
+      { ...locks[0], filename: 'a', fileid: { devid: 70, inode: 30, extid: 0 } },
+      { ...locks[0], filename: 'b', fileid: { devid: 70, inode: 3, extid: 0 } },
+      { ...locks[0], filename: 'c', fileid: { devid: 9, inode: 1, extid: 0 } },
+    ] as SmbLockInfo[]);
+    spectator = createComponent();
+    loader = TestbedHarnessEnvironment.loader(spectator.fixture);
+    table = await loader.getHarness(TnTableHarness);
+
+    await table.clickSortHeader('fileid');
+
+    // Sorting the rendered "70:3:0" text puts 70 before 9, and 70:30 before 70:3.
+    expect((await table.getAllRowTexts()).map((row) => row[2])).toEqual(['9:1:0', '70:3:0', '70:30:0']);
   });
 
   it('should call loadData when Refresh button is pressed', async () => {
     jest.spyOn(spectator.component.dataProvider, 'load');
-    const refreshButton = await loader.getHarness(MatButtonHarness.with({ text: 'Refresh' }));
+    const refreshButton = await loader.getHarness(TnButtonHarness.with({ label: 'Refresh' }));
     await refreshButton.click();
     expect(spectator.component.dataProvider.load).toHaveBeenCalled();
   });

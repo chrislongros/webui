@@ -1,11 +1,14 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { TestBed } from '@angular/core/testing';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { createRoutingFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import {
+  TnCheckboxHarness, TnInputHarness, TnSelectHarness,
+} from '@truenas/ui-components';
 import { MockComponent } from 'ng-mocks';
 import { of } from 'rxjs';
-import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
+import { failApiCall, mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { FtpConfig } from 'app/interfaces/ftp-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
@@ -16,17 +19,16 @@ import { IxPermissionsComponent } from 'app/modules/forms/ix-forms/components/ix
 import {
   WithManageCertificatesLinkComponent,
 } from 'app/modules/forms/ix-forms/components/with-manage-certificates-link/with-manage-certificates-link.component';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { ixFormTestingProviders } from 'app/modules/forms/ix-forms/testing/ix-form-testing.helpers';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { ServiceFtpComponent } from 'app/pages/services/components/service-ftp/service-ftp.component';
+import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 import { FilesystemService } from 'app/services/filesystem.service';
 import { SystemGeneralService } from 'app/services/system-general.service';
 
 describe('ServiceFtpComponent', () => {
   let spectator: Spectator<ServiceFtpComponent>;
   let loader: HarnessLoader;
-  let form: IxFormHarness;
   const existingFtpConfig = {
     anonpath: '/mnt/x',
     anonuserbw: 3145728,
@@ -69,10 +71,26 @@ describe('ServiceFtpComponent', () => {
     tls_policy: '!data',
   } as FtpConfig;
 
-  const slideInRef: SlideInRef<undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
+  const getInput = (name: string): Promise<TnInputHarness> => loader.getHarness(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getSelect = (name: string): Promise<TnSelectHarness> => loader.getHarness(
+    TnSelectHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getCheckbox = (name: string): Promise<TnCheckboxHarness> => loader.getHarness(
+    TnCheckboxHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const hasSelect = async (name: string): Promise<boolean> => (await loader.getAllHarnesses(
+    TnSelectHarness.with({ selector: `[formControlName="${name}"]` }),
+  )).length > 0;
+  const hasCheckbox = async (name: string): Promise<boolean> => (await loader.getAllHarnesses(
+    TnCheckboxHarness.with({ selector: `[formControlName="${name}"]` }),
+  )).length > 0;
+  // The Advanced/Basic toggle is rendered by the side-panel host from `footerActions`.
+  const toggleAdvancedOptions = (): void => {
+    const [toggleAdvanced] = spectator.component.footerActions;
+    toggleAdvanced.onClick();
+    spectator.detectChanges();
   };
 
   const createComponent = createRoutingFactory({
@@ -104,94 +122,106 @@ describe('ServiceFtpComponent', () => {
       mockProvider(DialogService, {
         confirm: jest.fn(() => of(true)),
       }),
-      mockProvider(SlideInRef, slideInRef),
+      ...ixFormTestingProviders(),
       mockAuth(),
     ],
   });
 
-  beforeEach(async () => {
+  beforeEach(() => {
     spectator = createComponent();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    form = await loader.getHarness(IxFormHarness);
+  });
+
+  it('blocks Save when the initial config load fails', () => {
+    expect(spectator.component.canSubmit()).toBe(true);
+
+    const api = spectator.inject(ApiService);
+    const showErrorModal = jest.spyOn(spectator.inject(ErrorHandlerService), 'showErrorModal')
+      .mockReturnValue(of(true));
+    failApiCall(api, 'ftp.config');
+
+    // A fresh instance rather than a second `ngOnInit()` on the one from `beforeEach`:
+    // re-initialising an already-initialised form re-registers its valueChanges subscriptions,
+    // so the assertion would hinge on double-init being harmless.
+    const failed = TestBed.createComponent(ServiceFtpComponent);
+    failed.detectChanges();
+
+    expect(showErrorModal).toHaveBeenCalled();
+    // `hasLoadFailed` is what the panel reads (for its banner) and what `<ix-form>`'s
+    // extraDisabled is bound to; that binding blocking Save is covered in the ix-form spec.
+    expect(failed.componentInstance.hasLoadFailed()).toBe(true);
+    expect(failed.componentInstance.canSubmit()).toBe(false);
   });
 
   it('loads and shows current settings for FTP service', async () => {
-    const values = await form.getValues();
-
     expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('ftp.config');
-    expect(values).toEqual({
-      Port: '21',
-      Clients: '5',
-      Connections: '2',
-      'Login Attempts': '1',
-      'Notransfer Timeout': '300',
-      Timeout: '600',
-    });
+
+    expect(await (await getInput('port')).getValue()).toBe('21');
+    expect(await (await getInput('clients')).getValue()).toBe('5');
+    expect(await (await getInput('ipconnections')).getValue()).toBe('2');
+    expect(await (await getInput('loginattempt')).getValue()).toBe('1');
+    expect(await (await getInput('timeout_notransfer')).getValue()).toBe('300');
+    expect(await (await getInput('timeout')).getValue()).toBe('600');
   });
 
-  it('shows advanced options when Advanced Options button is pressed', async () => {
-    const advancedOptionsButton = await loader.getHarness(MatButtonHarness.with({ text: 'Advanced Options' }));
-    await advancedOptionsButton.click();
+  it('exposes a single footer action that flips between Advanced and Basic Options', () => {
+    expect(spectator.component.footerActions).toHaveLength(1);
 
-    const values = await form.getValues();
+    const [toggleAdvanced] = spectator.component.footerActions;
+    expect(toggleAdvanced.label).toBe('Advanced Options');
+    expect(toggleAdvanced.testId).toBe('toggle-advanced-options');
 
-    expect(values).toEqual({
-      Port: '21',
-      Clients: '5',
-      Connections: '2',
-      'Login Attempts': '1',
-      'Notransfer Timeout': '300',
-      Timeout: '600',
-      Certificate: 'Secure certificate',
+    toggleAdvancedOptions();
 
-      'Always Chroot': true,
-      'Allow Anonymous Login': true,
-      Path: '/mnt/x',
-      'Allow Local User Login': true,
-      'Require IDENT Authentication': true,
-      'File Permissions': '077',
-      'Directory Permissions': '022',
+    expect(spectator.component.footerActions[0].label).toBe('Basic Options');
+  });
 
-      'Enable TLS': true,
-      'TLS Policy': '!Data',
-      'TLS Allow Client Renegotiations': true,
-      'TLS Allow Dot Login': false,
-      'TLS Allow Per User': true,
-      'TLS Common Name Required': true,
-      'TLS Enable Diagnostics': false,
-      'TLS Export Certificate Data': true,
-      'TLS No Empty Fragments': false,
-      'TLS No Session Reuse Required': false,
-      'TLS Export Standard Vars': true,
-      'TLS DNS Name Required': true,
-      'TLS IP Address Required': false,
+  it('shows advanced options when advanced mode is toggled', async () => {
+    toggleAdvancedOptions();
 
-      'Minimum Passive Port': '10000',
-      'Maximum Passive Port': '12000',
-      'Enable FXP': true,
-      'Allow Transfer Resumption': true,
-      'Perform Reverse DNS Lookups': true,
-      'Masquerade Address': '192.168.1.110',
-      'Display Login': 'Welcome',
-      'Auxiliary Parameters': '--test=value',
-      'Local User Upload Bandwidth: (Examples: 500 KiB, 500M, 2 TB)': '1 GiB',
-      'Local User Download Bandwidth': '2 GiB',
-      'Anonymous User Upload Bandwidth': '3 GiB',
-      'Anonymous User Download Bandwidth': '5 MiB',
-    });
+    expect(await (await getSelect('ssltls_certificate')).getDisplayText()).toBe('Secure certificate');
+
+    expect(await (await getCheckbox('defaultroot')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('onlyanonymous')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('onlylocal')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('ident')).isChecked()).toBe(true);
+
+    expect(await (await getCheckbox('tls')).isChecked()).toBe(true);
+    expect(await (await getSelect('tls_policy')).getDisplayText()).toBe('!Data');
+    expect(await (await getCheckbox('tls_opt_allow_client_renegotiations')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('tls_opt_allow_dot_login')).isChecked()).toBe(false);
+    expect(await (await getCheckbox('tls_opt_allow_per_user')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('tls_opt_common_name_required')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('tls_opt_enable_diags')).isChecked()).toBe(false);
+    expect(await (await getCheckbox('tls_opt_export_cert_data')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('tls_opt_no_empty_fragments')).isChecked()).toBe(false);
+    expect(await (await getCheckbox('tls_opt_no_session_reuse_required')).isChecked()).toBe(false);
+    expect(await (await getCheckbox('tls_opt_stdenvvars')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('tls_opt_dns_name_required')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('tls_opt_ip_address_required')).isChecked()).toBe(false);
+
+    expect(await (await getInput('passiveportsmin')).getValue()).toBe('10000');
+    expect(await (await getInput('passiveportsmax')).getValue()).toBe('12000');
+    expect(await (await getCheckbox('fxp')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('resume')).isChecked()).toBe(true);
+    expect(await (await getCheckbox('reversedns')).isChecked()).toBe(true);
+    expect(await (await getInput('masqaddress')).getValue()).toBe('192.168.1.110');
+    expect(await (await getInput('banner')).getValue()).toBe('Welcome');
+    expect(await (await getInput('options')).getValue()).toBe('--test=value');
+
+    expect(await (await getInput('localuserbw')).getValue()).toBe('1 GiB');
+    expect(await (await getInput('localuserdlbw')).getValue()).toBe('2 GiB');
+    expect(await (await getInput('anonuserbw')).getValue()).toBe('3 GiB');
+    expect(await (await getInput('anonuserdlbw')).getValue()).toBe('5 MiB');
   });
 
   it('updates config for FTP service when form is submitted', async () => {
-    const advancedOptionsButton = await loader.getHarness(MatButtonHarness.with({ text: 'Advanced Options' }));
-    await advancedOptionsButton.click();
+    toggleAdvancedOptions();
 
-    await form.fillForm({
-      'TLS IP Address Required': true,
-      'Anonymous User Download Bandwidth': '5',
-    });
+    await (await getCheckbox('tls_opt_ip_address_required')).check();
+    await (await getInput('anonuserdlbw')).setValue('5');
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    spectator.component.submit();
 
     expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('ftp.update', [{
       ...existingFtpConfig,
@@ -201,27 +231,21 @@ describe('ServiceFtpComponent', () => {
   });
 
   it('does not show TLS fields when TLS is off', async () => {
-    const advancedOptionsButton = await loader.getHarness(MatButtonHarness.with({ text: 'Advanced Options' }));
-    await advancedOptionsButton.click();
+    toggleAdvancedOptions();
 
-    await form.fillForm({
-      'Enable TLS': false,
-    });
+    await (await getCheckbox('tls')).uncheck();
 
-    const controlNames = Object.keys(await form.getControlHarnessesDict());
-    expect(controlNames).not.toContainValue([
-      'TLS Policy',
-      'TLS Allow Client Renegotiations',
-      'TLS Allow Dot Login',
-      'TLS Allow Per User',
-      'TLS Common Name Required',
-      'TLS Enable Diagnostics',
-      'TLS Export Certificate Data',
-      'TLS No Empty Fragments',
-      'TLS No Session Reuse Required',
-      'TLS Export Standard Vars',
-      'TLS DNS Name Required',
-      'TLS IP Address Required',
-    ]);
+    expect(await hasSelect('tls_policy')).toBe(false);
+    expect(await hasCheckbox('tls_opt_allow_client_renegotiations')).toBe(false);
+    expect(await hasCheckbox('tls_opt_allow_dot_login')).toBe(false);
+    expect(await hasCheckbox('tls_opt_allow_per_user')).toBe(false);
+    expect(await hasCheckbox('tls_opt_common_name_required')).toBe(false);
+    expect(await hasCheckbox('tls_opt_enable_diags')).toBe(false);
+    expect(await hasCheckbox('tls_opt_export_cert_data')).toBe(false);
+    expect(await hasCheckbox('tls_opt_no_empty_fragments')).toBe(false);
+    expect(await hasCheckbox('tls_opt_no_session_reuse_required')).toBe(false);
+    expect(await hasCheckbox('tls_opt_stdenvvars')).toBe(false);
+    expect(await hasCheckbox('tls_opt_dns_name_required')).toBe(false);
+    expect(await hasCheckbox('tls_opt_ip_address_required')).toBe(false);
   });
 });

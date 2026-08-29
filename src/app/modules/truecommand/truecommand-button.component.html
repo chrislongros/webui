@@ -1,32 +1,40 @@
-@if (tcStatus && tcStatus.status === TrueCommandStatus.Connecting) {
-  <button
-    mat-icon-button
-    id="tc-connecting"
-    class="topbar-button-right"
-    ixTest="truecommand-indicator"
-    [matTooltip]="tooltips.connectingToTruecommand | translate"
-    (click)="stopTrueCommandConnecting()"
-  >
-    <tn-icon
-      size="lg"
-      class="truecommand-button-connecting-animation"
+@let status = tcStatus();
+@if (status) {
+  @if (status.status === TrueCommandStatus.Connecting) {
+    <tn-icon-button
+      id="tc-connecting"
+      class="topbar-button-right truecommand-button"
       name="tn-truecommand-logo-mark"
-    ></tn-icon>
-  </button>
+      size="lg"
+      testId="truecommand-indicator"
+      [dense]="true"
+      [tooltip]="tooltip()"
+      [ariaLabel]="tooltip()"
+      (onClick)="stopTrueCommandConnecting()"
+    >
+      <ng-container *ngTemplateOutlet="logoBadge"></ng-container>
+    </tn-icon-button>
+  } @else {
+    <tn-icon-button
+      class="topbar-button-right truecommand-button"
+      name="tn-truecommand-logo-mark"
+      size="lg"
+      testId="truecommand-indicator"
+      [dense]="true"
+      [ngClass]="[status.status]"
+      [tooltip]="tooltip()"
+      [ariaLabel]="tooltip()"
+      [ixUiSearch]="searchableElements.elements.trueCommand"
+      (onClick)="handleClick()"
+    >
+      <ng-container *ngTemplateOutlet="logoBadge"></ng-container>
+    </tn-icon-button>
+  }
 }
 
-@if (tcStatus && tcStatus.status !== TrueCommandStatus.Connecting) {
-  <button
-    mat-icon-button
-    class="topbar-button-right truecommand-button"
-    ixTest="truecommand-indicator"
-    matBadgeSize="small"
-    [matTooltip]="tooltips.truecommandStatus | translate"
-    [matBadge]="tcsStatusMatBadge"
-    [ngClass]="[tcStatus.status]"
-    [ixUiSearch]="searchableElements.elements.trueCommand"
-    (click)="handleClick()"
-  >
-    <tn-icon size="lg" name="tn-truecommand-logo-mark"></tn-icon>
-  </button>
-}
+<ng-template #logoBadge>
+  @let badge = statusBadge();
+  @if (badge) {
+    <ix-status-badge [badge]="badge"></ix-status-badge>
+  }
+</ng-template>

@@ -126,7 +126,6 @@ describe('PoolManagerComponent – step changing', () => {
         }),
         mockCall('enclosure2.query', [] as Enclosure[]),
         mockCall('pool.query', []),
-        mockCall('pool.dataset.encryption_algorithm_choices', {}),
         mockJob('pool.create', fakeSuccessfulJob()),
       ]),
       mockProvider(PoolWizardNameValidationService, {
@@ -228,7 +227,7 @@ describe('PoolManagerComponent – step changing', () => {
       VDevType.Cache,
     ]);
 
-    // Metadata
+    // Special
     await wizard.clickNext();
     await wizard.fillStep({
       Layout: 'Stripe',

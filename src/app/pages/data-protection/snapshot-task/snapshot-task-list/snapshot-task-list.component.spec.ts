@@ -1,9 +1,9 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { Spectator } from '@ngneat/spectator';
 import { createComponentFactory, mockProvider } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
+import { TnButtonHarness, TnSelectHarness, TnTableHarness } from '@truenas/ui-components';
 import { MockComponent, MockPipe } from 'ng-mocks';
 import { of, Subject } from 'rxjs';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
@@ -16,22 +16,16 @@ import { PeriodicSnapshotTaskUi, PeriodicSnapshotTask } from 'app/interfaces/per
 import { ScheduleDescriptionPipe } from 'app/modules/dates/pipes/schedule-description/schedule-description.pipe';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { IxTableHarness } from 'app/modules/ix-table/components/ix-table/ix-table.harness';
-import {
-  IxCellScheduleComponent,
-} from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-schedule/ix-cell-schedule.component';
-import {
-  IxTableColumnsSelectorComponent,
-} from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import {
-  IxTableDetailsRowComponent,
-} from 'app/modules/ix-table/components/ix-table-details-row/ix-table-details-row.component';
-import { IxTableDetailsRowDirective } from 'app/modules/ix-table/directives/ix-table-details-row.directive';
 import { LocaleService } from 'app/modules/language/locale.service';
 import { PageHeaderComponent } from 'app/modules/page-header/page-title-header/page-header.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
+import {
+  TableColumnPickerComponent,
+} from 'app/modules/tn-table/components/table-column-picker/table-column-picker.component';
+import {
+  TableDetailsRowComponent,
+} from 'app/modules/tn-table/components/table-details-row/table-details-row.component';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   SnapshotTaskFormComponent,
@@ -45,7 +39,7 @@ import { selectPreferences } from 'app/store/preferences/preferences.selectors';
 describe('SnapshotTaskListComponent', () => {
   let spectator: Spectator<SnapshotTaskListComponent>;
   let loader: HarnessLoader;
-  let table: IxTableHarness;
+  let table: TnTableHarness;
   const event$ = new Subject<ApiEvent<PeriodicSnapshotTask>>();
 
   const snapshotTasksList = [
@@ -74,26 +68,24 @@ describe('SnapshotTaskListComponent', () => {
     } as PeriodicSnapshotTaskUi,
   ];
 
-  const slideInRef: SlideInRef<PeriodicSnapshotTaskUi | undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
-
   const createComponent = createComponentFactory({
     component: SnapshotTaskListComponent,
     imports: [
       MockComponent(PageHeaderComponent),
       BasicSearchComponent,
-      IxTableColumnsSelectorComponent,
-      IxTableDetailsRowDirective,
-      IxTableDetailsRowComponent,
+      TableColumnPickerComponent,
+      TableDetailsRowComponent,
     ],
     overrideComponents: [
       [
-        IxCellScheduleComponent, {
-          remove: { imports: [ScheduleDescriptionPipe] },
-          add: { imports: [MockPipe(ScheduleDescriptionPipe, jest.fn(() => 'At 12:00 AM, every day'))] },
+        SnapshotTaskListComponent, {
+          // Both arms: the template pipes `schedule` through it, and the column model calls the
+          // provided instance so a detail row prints a description instead of `[object Object]`.
+          remove: { imports: [ScheduleDescriptionPipe], providers: [ScheduleDescriptionPipe] },
+          add: {
+            imports: [MockPipe(ScheduleDescriptionPipe, jest.fn(() => 'At 12:00 AM, every day'))],
+            providers: [mockProvider(ScheduleDescriptionPipe, { transform: () => 'At 12:00 AM, every day' })],
+          },
         },
       ],
     ],
@@ -117,10 +109,9 @@ describe('SnapshotTaskListComponent', () => {
       mockProvider(DialogService, {
         confirm: jest.fn(() => of({ confirmed: true, secondaryCheckbox: false })),
       }),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         open: jest.fn(() => SlideInResult.empty()),
       }),
-      mockProvider(SlideInRef, slideInRef),
       mockProvider(LocaleService),
       mockProvider(TaskService, {
         getTaskNextRun: jest.fn(() => 'in about 10 hours'),
@@ -139,12 +130,14 @@ describe('SnapshotTaskListComponent', () => {
   beforeEach(async () => {
     spectator = createComponent();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    table = await loader.getHarness(IxTableHarness);
+    table = await loader.getHarness(TnTableHarness);
   });
 
   it('should show table rows', async () => {
-    const expectedRows = [
-      ['Pool/Dataset', 'Recursive', 'Naming Schema', 'When', 'Frequency', 'Enabled', 'State'],
+    expect(await table.getHeaderTexts()).toEqual([
+      'Pool/Dataset', 'Recursive', 'Naming Schema', 'When', 'Frequency', 'Enabled', 'State',
+    ]);
+    expect(await table.getAllRowTexts()).toEqual([
       [
         'm60pool/manual-2024-02-05_11-19-clone',
         'No',
@@ -154,23 +147,45 @@ describe('SnapshotTaskListComponent', () => {
         'Yes',
         'Pending',
       ],
-    ];
+    ]);
+  });
 
-    const cells = await table.getCellTexts();
-    expect(cells).toEqual(expectedRows);
+  it('expands the detail row when the row itself is clicked', async () => {
+    expect(await table.isRowExpanded(0)).toBe(false);
+
+    await table.clickRow(0);
+
+    expect(await table.isRowExpanded(0)).toBe(true);
+  });
+
+  // A detail row prints text, so every column whose cell formats its value in the template has to
+  // say how to print it — otherwise Frequency reads `[object Object]` and State reads `PENDING`.
+  it('prints the hidden Frequency and State columns the way their cells render them', async () => {
+    const picker = await loader.getHarness(TnSelectHarness.with({ ancestor: 'ix-table-column-picker' }));
+    await picker.open();
+    await picker.selectOption('Frequency');
+    await picker.selectOption('State');
+    spectator.detectChanges();
+
+    await table.toggleRowExpansion(0);
+
+    const detailsRow = spectator.query('ix-table-details-row');
+    expect(detailsRow).toHaveText('Frequency:At 12:00 AM, every day');
+    expect(detailsRow).toHaveText('State:Pending');
   });
 
   it('shows form to edit an existing task when Edit button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Edit' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
     await editButton.click();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(
       SnapshotTaskFormComponent,
       {
+        title: 'Edit Periodic Snapshot Task',
         wide: true,
-        data: snapshotTasksList[0],
+        inputs: { taskToEdit: snapshotTasksList[0] },
       },
     );
 
@@ -180,9 +195,9 @@ describe('SnapshotTaskListComponent', () => {
   it('deletes a Cloud Sync with confirmation when Delete button is pressed', async () => {
     jest.spyOn(spectator.inject(DialogService), 'confirm');
 
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const deleteButton = await loader.getHarness(MatButtonHarness.with({ text: 'Delete' }));
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
     await deleteButton.click();
 
     expect(spectator.inject(DialogService).confirm).toHaveBeenCalledWith({

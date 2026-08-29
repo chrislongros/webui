@@ -2,8 +2,8 @@
   class="job-item"
   [class.abortable]="job().state === JobState.Running && job().abortable"
   [class.interactive]="clickable()"
-  [matTooltip]="job().state === JobState.Failed ? job().error : null"
-  [matTooltipPosition]="'left'"
+  [tnTooltip]="job().state === JobState.Failed ? job().error : null"
+  [tnTooltipPosition]="'left'"
 >
   <div class="job-item-body" (click)="clickable() && open()">
     <div class="description-line">
@@ -18,11 +18,12 @@
     </div>
 
     @if (job().state === JobState.Running) {
-      <mat-progress-bar
+      <tn-progress-bar
         class="job-progress"
         [value]="job().progress.percent"
         [mode]="job().progress.percent ? 'determinate' : 'indeterminate'"
-      ></mat-progress-bar>
+        [ariaLabel]="'Progress of {job}' | translate: { job: job().description || job().method }"
+      ></tn-progress-bar>
     }
 
     <div>
@@ -96,47 +97,43 @@
 @if (job().state === JobState.Running && job().abortable) {
   <tn-icon-button
     class="job-button-abort"
-    type="button"
     name="stop-circle"
     library="mdi"
     [class.job-icon-abort]="true"
-    [ixTest]="['abort', job().description, job().method]"
-    [matTooltip]="'Abort' | translate"
+    [testId]="['abort', job().description, job().method]"
+    [tnTooltip]="'Abort' | translate"
     (click)="abort()"
   ></tn-icon-button>
 }
 
 @if (job().state === JobState.Waiting) {
   <tn-icon-button
-    type="button"
     name="clock-outline"
     library="mdi"
     [class.job-icon-waiting]="true"
-    [ixTest]="['waiting', job().description, job().method]"
+    [testId]="['waiting', job().description, job().method]"
     [disabled]="true"
   ></tn-icon-button>
 }
 
 @if (job().state === JobState.Failed) {
   <tn-icon-button
-    type="button"
     name="close-circle"
     library="mdi"
-    matTooltipPosition="left"
+    tnTooltipPosition="left"
     [class.job-icon-failed]="true"
-    [ixTest]="['failed', job().description, job().method]"
-    [matTooltip]="job().error"
+    [testId]="['failed', job().description, job().method]"
+    [tnTooltip]="job().error"
     [disabled]="true"
   ></tn-icon-button>
 }
 
 @if (job().state === JobState.Success) {
   <tn-icon-button
-    type="button"
     name="check-circle"
     library="mdi"
     [class.job-icon-success]="true"
-    [ixTest]="['success', job().description, job().method]"
+    [testId]="['success', job().description, job().method]"
     [disabled]="true"
   ></tn-icon-button>
 }

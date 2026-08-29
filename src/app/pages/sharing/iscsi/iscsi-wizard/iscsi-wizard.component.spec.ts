@@ -1,11 +1,12 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatStepperModule } from '@angular/material/stepper';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
 import { Store } from '@ngrx/store';
 import { provideMockStore } from '@ngrx/store/testing';
+import {
+  TnButtonHarness, TnChipInputHarness, TnInputHarness, TnSelectHarness,
+} from '@truenas/ui-components';
 import { MockComponent } from 'ng-mocks';
 import { of } from 'rxjs';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
@@ -28,9 +29,7 @@ import {
   ExplorerCreateDatasetComponent,
 } from 'app/modules/forms/ix-forms/components/ix-explorer/explorer-create-dataset/explorer-create-dataset.component';
 import { IxListHarness } from 'app/modules/forms/ix-forms/components/ix-list/ix-list.harness';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { fillControlValues, indexFormControls } from 'app/modules/forms/ix-forms/testing/control-harnesses.helpers';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { IscsiWizardComponent } from 'app/pages/sharing/iscsi/iscsi-wizard/iscsi-wizard.component';
 import { ExtentWizardStepComponent } from 'app/pages/sharing/iscsi/iscsi-wizard/steps/extent-wizard-step/extent-wizard-step.component';
@@ -44,20 +43,12 @@ import { selectSystemInfo } from 'app/store/system-info/system-info.selectors';
 describe('IscsiWizardComponent', () => {
   let spectator: Spectator<IscsiWizardComponent>;
   let loader: HarnessLoader;
-  let form: IxFormHarness;
   let store$: Store<AppState>;
-
-  const slideInRef: SlideInRef<undefined, unknown> = {
-    close: jest.fn(() => true),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
 
   const createComponent = createComponentFactory({
     component: IscsiWizardComponent,
     imports: [
       ReactiveFormsModule,
-      MatStepperModule,
       TargetWizardStepComponent,
       ExtentWizardStepComponent,
       ProtocolOptionsWizardStepComponent,
@@ -65,7 +56,6 @@ describe('IscsiWizardComponent', () => {
     ],
     providers: [
       mockAuth(),
-      mockProvider(SlideIn),
       mockProvider(DialogService, {
         confirm: jest.fn(() => of(true)),
       }),
@@ -128,42 +118,81 @@ describe('IscsiWizardComponent', () => {
           },
         ],
       }),
-      mockProvider(SlideInRef, slideInRef),
     ],
   });
 
-  beforeEach(async () => {
+  const getTnInput = (name: string): Promise<TnInputHarness> => loader.getHarness(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getTnSelect = (name: string): Promise<TnSelectHarness> => loader.getHarness(
+    TnSelectHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getTnChipInput = (name: string): Promise<TnChipInputHarness> => loader.getHarness(
+    TnChipInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+
+  /**
+   * Fills controls addressed by their visible label. The wizard holds ix-* (`ix-explorer`) and
+   * tn-* controls side by side, and `IxFormHarness` indexes only the former — `indexFormControls`
+   * walks both. Repeated labels stay last-wins, which is what the FC-port tests rely on to fill
+   * the row they just added.
+   *
+   * Re-indexes before every key, the way `IxFormHarness.fillForm` does: one key can reveal the
+   * next control (picking 'Create new virtual port' is what renders the host select), so a single
+   * snapshot taken up front would miss it.
+   */
+  const fillByLabel = async (values: Record<string, unknown>): Promise<void> => {
+    for (const [label, value] of Object.entries(values)) {
+      await fillControlValues(await indexFormControls(loader), { [label]: value });
+    }
+  };
+
+  beforeEach(() => {
     spectator = createComponent();
 
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    form = await loader.getHarness(IxFormHarness);
     store$ = spectator.inject(Store);
     jest.spyOn(store$, 'dispatch');
   });
 
-  it('iSCSI: creates objects when wizard is submitted', async () => {
-    spectator.detectChanges();
-    await spectator.fixture.whenStable();
+  // tn-stepper renders only the active step's content, so navigate with the
+  // Next button and re-resolve the form on each step.
+  async function clickNext(): Promise<void> {
+    const nextButton = await loader.getHarness(TnButtonHarness.with({ label: 'Next' }));
+    await nextButton.click();
+  }
 
-    await form.fillForm({
-      Name: 'test-name',
-      Device: 'Create New',
+  async function fillIscsiWizard(): Promise<void> {
+    // Target step (defaults to "Create New" target) -> Next
+    await clickNext();
+
+    // Extent step
+    await (await getTnInput('name')).setValue('test-name');
+    await (await getTnSelect('disk')).selectOption('Create New');
+    await fillByLabel({
       'Pool/Dataset': '/mnt/new_pool',
-      Size: 1024,
-      Portal: 'Create New',
-      Initiators: ['initiator1', 'initiator2'],
     });
+    await (await getTnInput('volsize')).setValue('1024 MiB');
+    await clickNext();
+
+    // Protocol Options step
+    await (await getTnSelect('portal')).selectOption('Create New');
+
+    const initiatorsInput = await getTnChipInput('initiators');
+    await initiatorsInput.addChip('initiator1');
+    await initiatorsInput.addChip('initiator2');
 
     const addIpAddressButton = await loader.getHarness(IxListHarness.with({ label: 'IP Address' }));
     await addIpAddressButton.pressAddButton();
 
-    await form.fillForm(
-      {
-        'IP Address': '::',
-      },
+    const listenIpSelect = await loader.getHarness(
+      TnSelectHarness.with({ ancestor: 'ix-list-item' }),
     );
+    await listenIpSelect.selectOption('::');
+  }
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
+  async function submitWizard(): Promise<void> {
+    const saveButton = await loader.getHarness(TnButtonHarness.with({ label: 'Save' }));
     await saveButton.click();
 
     // Wait for all async operations to complete
@@ -172,14 +201,24 @@ describe('IscsiWizardComponent', () => {
     });
     spectator.detectChanges();
     await spectator.fixture.whenStable();
+  }
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(8, 'pool.dataset.create', [{
+  it('iSCSI: creates objects when wizard is submitted', async () => {
+    let createdTarget: IscsiTarget | undefined;
+    spectator.component.closed.subscribe((target) => {
+      createdTarget = target;
+    });
+
+    await fillIscsiWizard();
+    await submitWizard();
+
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('pool.dataset.create', [{
       name: 'new_pool/test-name',
       type: 'VOLUME',
       volsize: 1073741824,
     }]);
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(9, 'iscsi.extent.create', [{
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('iscsi.extent.create', [{
       blocksize: 512,
       disk: 'zvol/my+pool/test_zvol',
       insecure_tpc: true,
@@ -191,17 +230,17 @@ describe('IscsiWizardComponent', () => {
       xen: false,
     }]);
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(10, 'iscsi.portal.create', [{
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('iscsi.portal.create', [{
       comment: 'test-name',
       listen: [{ ip: '::' }],
     }]);
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(11, 'iscsi.initiator.create', [{
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('iscsi.initiator.create', [{
       comment: 'test-name',
       initiators: ['initiator1', 'initiator2'],
     }]);
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(12, 'iscsi.target.create', [{
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('iscsi.target.create', [{
       name: 'test-name',
       mode: 'ISCSI',
       groups: [{
@@ -212,112 +251,80 @@ describe('IscsiWizardComponent', () => {
       }],
     }]);
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(13, 'iscsi.targetextent.create', [{
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('iscsi.targetextent.create', [{
       extent: 11,
       target: 15,
     }]);
 
     expect(store$.dispatch).toHaveBeenCalledWith(checkIfServiceIsEnabled({ serviceName: ServiceName.Iscsi }));
 
-    expect(spectator.inject(SlideInRef).close).toHaveBeenCalled();
+    expect(createdTarget).toEqual({ id: 15 } as IscsiTarget);
   });
 
-  it('fibre channel: creates objects when wizard is submitted', async () => {
-    spectator.detectChanges();
-    await spectator.fixture.whenStable();
-
-    await form.fillForm({
-      Name: 'test-name',
-      Device: 'Create New',
-      'Pool/Dataset': '/mnt/new_pool',
-      Size: 1024,
-      Portal: 'Create New',
-      Initiators: ['initiator1', 'initiator2'],
+  it('fibre channel: creates a Fibre Channel target when wizard is submitted', async () => {
+    let createdTarget: IscsiTarget | undefined;
+    spectator.component.closed.subscribe((target) => {
+      createdTarget = target;
     });
 
-    const addIpAddressButton = await loader.getHarness(IxListHarness.with({ label: 'IP Address' }));
-    await addIpAddressButton.pressAddButton();
+    // Target step: switch to Fibre Channel mode
+    await fillByLabel({ Mode: 'Fibre Channel' });
+    await clickNext();
 
-    await form.fillForm(
-      {
-        'IP Address': '::',
-      },
-    );
+    // Extent step
+    await (await getTnInput('name')).setValue('test-name');
+    await (await getTnSelect('disk')).selectOption('Create New');
+    await fillByLabel({ 'Pool/Dataset': '/mnt/new_pool' });
+    await (await getTnInput('volsize')).setValue('1024 MiB');
+    await clickNext();
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
-
-    // Wait for all async operations to complete
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
+    // Protocol Options step: FC mode swaps portals/initiators for Fibre Channel ports
+    // and auto-adds an empty first port row, so fill it rather than adding another.
+    await fillByLabel({
+      'Port Mode': 'Use existing port',
+      'Existing Port': 'fc0',
     });
-    spectator.detectChanges();
-    await spectator.fixture.whenStable();
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(8, 'pool.dataset.create', [{
-      name: 'new_pool/test-name',
-      type: 'VOLUME',
-      volsize: 1073741824,
-    }]);
+    await submitWizard();
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(9, 'iscsi.extent.create', [{
-      blocksize: 512,
-      disk: 'zvol/my+pool/test_zvol',
-      insecure_tpc: true,
+    // FC targets carry no iSCSI portal/initiator groups.
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('iscsi.target.create', [{
       name: 'test-name',
-      product_id: null,
-      ro: false,
-      rpm: 'SSD',
-      type: 'DISK',
-      xen: false,
+      mode: 'FC',
+      groups: [],
     }]);
+    expect(spectator.inject(ApiService).call).not.toHaveBeenCalledWith('iscsi.portal.create', expect.anything());
+    expect(spectator.inject(ApiService).call).not.toHaveBeenCalledWith('iscsi.initiator.create', expect.anything());
 
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(10, 'iscsi.portal.create', [{
-      comment: 'test-name',
-      listen: [{ ip: '::' }],
-    }]);
-
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(11, 'iscsi.initiator.create', [{
-      comment: 'test-name',
-      initiators: ['initiator1', 'initiator2'],
-    }]);
-
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(12, 'iscsi.target.create', [{
-      name: 'test-name',
-      mode: 'ISCSI',
-      groups: [{
-        auth: null,
-        authmethod: 'NONE',
-        initiator: 14,
-        portal: 13,
-      }],
-    }]);
-
-    expect(spectator.inject(ApiService).call).toHaveBeenNthCalledWith(13, 'iscsi.targetextent.create', [{
-      extent: 11,
-      target: 15,
+    // The chosen port is linked to the created target.
+    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('fcport.create', [{
+      port: 'fc0',
+      target_id: 15,
     }]);
 
     expect(store$.dispatch).toHaveBeenCalledWith(checkIfServiceIsEnabled({ serviceName: ServiceName.Iscsi }));
 
-    expect(spectator.inject(SlideInRef).close).toHaveBeenCalled();
+    expect(createdTarget).toEqual({ id: 15 } as IscsiTarget);
   });
 
   describe('FC MPIO validation', () => {
     beforeEach(async () => {
-      // Fill target step with FC mode
-      await form.fillForm({
-        Name: 'test-fc-target',
+      // Target step: switch to Fibre Channel mode, then advance
+      await fillByLabel({
         Mode: 'Fibre Channel',
       });
+      await clickNext();
 
-      // Move to extent step
-      await form.fillForm({
-        Device: 'Create New',
+      // Extent step
+      await (await getTnInput('name')).setValue('test-fc-target');
+      await (await getTnSelect('disk')).selectOption('Create New');
+      await fillByLabel({
         'Pool/Dataset': '/mnt/new_pool',
-        Size: 1024,
       });
+      await (await getTnInput('volsize')).setValue('1024 MiB');
+      await clickNext();
 
+      // Now on the Protocol Options step
       spectator.detectChanges();
     });
 
@@ -326,7 +333,7 @@ describe('IscsiWizardComponent', () => {
       const fcPortsList = await loader.getHarness(IxListHarness.with({ label: 'Fibre Channel Ports' }));
       await fcPortsList.pressAddButton();
 
-      await form.fillForm({
+      await fillByLabel({
         'Port Mode': 'Use existing port',
         'Existing Port': 'fc0',
       });
@@ -334,7 +341,7 @@ describe('IscsiWizardComponent', () => {
       // Add second port on fc1 (different physical port)
       await fcPortsList.pressAddButton();
 
-      await form.fillForm({
+      await fillByLabel({
         'Port Mode': 'Use existing port',
         'Existing Port': 'fc1',
       });
@@ -342,7 +349,7 @@ describe('IscsiWizardComponent', () => {
       spectator.detectChanges();
 
       // Verify no FC port validation errors displayed
-      const errorElement = spectator.query('mat-error');
+      const errorElement = spectator.query('.fc-port-error');
       expect(errorElement).toBeFalsy();
 
       // Note: Button may still be disabled due to other form validation,
@@ -356,14 +363,14 @@ describe('IscsiWizardComponent', () => {
 
       // First NPIV port on fc0
       await fcPortsList.pressAddButton();
-      await form.fillForm({
+      await fillByLabel({
         'Port Mode': 'Create new virtual port',
         'Choose Host for New Virtual Port': 'fc0/2',
       });
 
       // Second NPIV port on fc0 (should fail validation)
       await fcPortsList.pressAddButton();
-      await form.fillForm({
+      await fillByLabel({
         'Port Mode': 'Create new virtual port',
         'Choose Host for New Virtual Port': 'fc0/2',
       });
@@ -371,7 +378,7 @@ describe('IscsiWizardComponent', () => {
       spectator.detectChanges();
 
       // Verify submit button is disabled due to validation failure
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
+      const saveButton = await loader.getHarness(TnButtonHarness.with({ label: 'Save' }));
       expect(await saveButton.isDisabled()).toBe(true);
 
       // Note: Error detection for NPIV ports would require backend resolution
@@ -383,7 +390,7 @@ describe('IscsiWizardComponent', () => {
       const fcPortsList = await loader.getHarness(IxListHarness.with({ label: 'Fibre Channel Ports' }));
       await fcPortsList.pressAddButton();
 
-      await form.fillForm({
+      await fillByLabel({
         'Port Mode': 'Use existing port',
         'Existing Port': 'fc0',
       });
@@ -391,7 +398,7 @@ describe('IscsiWizardComponent', () => {
       // Add NPIV port on fc1 (different physical port)
       await fcPortsList.pressAddButton();
 
-      await form.fillForm({
+      await fillByLabel({
         'Port Mode': 'Create new virtual port',
         'Choose Host for New Virtual Port': 'fc1/1',
       });
@@ -399,7 +406,7 @@ describe('IscsiWizardComponent', () => {
       spectator.detectChanges();
 
       // Verify no FC port validation error displayed
-      const errorElement = spectator.query('mat-error');
+      const errorElement = spectator.query('.fc-port-error');
       expect(errorElement).toBeFalsy();
 
       // Note: Mixed mode (physical + NPIV) should be valid as long as they're on different physical ports
@@ -411,7 +418,7 @@ describe('IscsiWizardComponent', () => {
       spectator.detectChanges();
 
       // No error message should be shown for empty ports
-      const errorElement = spectator.query('mat-error');
+      const errorElement = spectator.query('.fc-port-error');
       expect(errorElement).toBeFalsy();
 
       // Note: The form may still be invalid due to other required fields

@@ -7,8 +7,12 @@ import { MatButtonModule } from '@angular/material/button';
 import {
   provideNativeDateAdapter,
 } from '@angular/material/core';
-import { MAT_SNACK_BAR_DEFAULT_OPTIONS, MatSnackBarConfig } from '@angular/material/snack-bar';
 import { BrowserModule, bootstrapApplication } from '@angular/platform-browser';
+// Legacy animations engine required by @truenas/ui-components (tn-table's [@detailExpand]);
+// all provide*Animations* APIs are deprecated in Angular 20.2+. Revisit once the library
+// moves to animate.enter/leave.
+// eslint-disable-next-line sonarjs/deprecation
+import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import {
   withPreloading,
   provideRouter,
@@ -25,7 +29,7 @@ import { provideStore } from '@ngrx/store';
 import {
   TranslateModule, TranslateLoader, TranslateCompiler, MissingTranslationHandler,
 } from '@ngx-translate/core';
-import { TnSpriteLoaderService } from '@truenas/ui-components';
+import { TN_TEST_ATTR, TnSpriteLoaderService } from '@truenas/ui-components';
 import { environment } from 'environments/environment';
 import { provideCharts, withDefaultRegisterables } from 'ng2-charts';
 import { MarkdownModule } from 'ngx-markdown';
@@ -37,6 +41,14 @@ import { filter, take } from 'rxjs';
 import { AppComponent } from 'app/app.component';
 import { rootRoutes } from 'app/app.routes';
 import { defaultLanguage } from 'app/constants/languages.constant';
+import { provideTnAutocompleteLabels } from 'app/core/providers/tn-autocomplete-labels.provider';
+import { provideTnCalendarIntl } from 'app/core/providers/tn-calendar-intl.provider';
+import { provideTnDialogLabels } from 'app/core/providers/tn-dialog-labels.provider';
+import { provideTnFallbackLabels } from 'app/core/providers/tn-fallback-labels.provider';
+import { provideTnFormFieldErrors } from 'app/core/providers/tn-form-field-errors.provider';
+import { provideTnSelectLabels } from 'app/core/providers/tn-select-labels.provider';
+import { provideTnTableLabels } from 'app/core/providers/tn-table-labels.provider';
+import { provideTnTablePagerLabels } from 'app/core/providers/tn-table-pager-labels.provider';
 import { chunkReloadKey, handleChunkLoadError } from 'app/helpers/handle-chunk-load-error';
 import { WINDOW, getWindow } from 'app/helpers/window.helper';
 import { IcuMissingTranslationHandler } from 'app/modules/language/translations/icu-missing-translation-handler';
@@ -54,6 +66,11 @@ if (environment.production) {
 
 bootstrapApplication(AppComponent, {
   providers: [
+    // Align @truenas/ui-components with webui's long-standing data-test attribute convention
+    // (see the [ixTest] directive). Library default is data-testid; this single provider
+    // routes every component-level testId input and TnTestIdDirective binding through data-test
+    // so existing automated tests keep matching their selectors.
+    { provide: TN_TEST_ATTR, useValue: 'data-test' },
     importProvidersFrom(
       BrowserModule,
       TranslateModule.forRoot({
@@ -101,17 +118,15 @@ bootstrapApplication(AppComponent, {
       serializer: CustomRouterStateSerializer,
     }),
     provideNgxWebstorage(withLocalStorage()),
+    // Registers a no-op animation engine so synthetic animation bindings (e.g. tn-table's
+    // [@detailExpand] detail row) resolve without errors, while keeping the app's
+    // long-standing instant (non-animated) behavior unchanged.
+    // eslint-disable-next-line sonarjs/deprecation -- see import note above.
+    provideNoopAnimations(),
     provideNativeDateAdapter(),
     {
       provide: OVERLAY_DEFAULT_CONFIG,
       useValue: { usePopover: false },
-    },
-    {
-      provide: MAT_SNACK_BAR_DEFAULT_OPTIONS,
-      useValue: {
-        verticalPosition: 'top',
-        duration: 3000,
-      } as MatSnackBarConfig,
     },
     {
       provide: ErrorHandler,
@@ -121,6 +136,20 @@ bootstrapApplication(AppComponent, {
       provide: WINDOW,
       useFactory: getWindow,
     },
+    {
+      // webui targets `data-test` (thousands of existing selectors), so switch the
+      // ui-components library off its `data-testid` default for all `testId` inputs.
+      provide: TN_TEST_ATTR,
+      useValue: 'data-test',
+    },
+    provideTnTablePagerLabels(),
+    provideTnFormFieldErrors(),
+    provideTnCalendarIntl(),
+    provideTnSelectLabels(),
+    provideTnAutocompleteLabels(),
+    provideTnDialogLabels(),
+    provideTnTableLabels(),
+    provideTnFallbackLabels(),
     provideAppInitializer(() => {
       const swService = inject(ServiceWorkerService);
       swService.register();

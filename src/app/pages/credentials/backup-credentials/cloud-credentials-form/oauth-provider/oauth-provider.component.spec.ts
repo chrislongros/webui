@@ -1,15 +1,13 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { byText } from '@ngneat/spectator';
 import { createComponentFactory, Spectator } from '@ngneat/spectator/jest';
+import { TnButtonHarness, TnInputHarness } from '@truenas/ui-components';
 import { mockWindow } from 'app/core/testing/utils/mock-window.utils';
 import { WINDOW } from 'app/helpers/window.helper';
 import { OauthMessage } from 'app/interfaces/oauth-message.interface';
 import { OauthButtonComponent } from 'app/modules/buttons/oauth-button/oauth-button.component';
-import { IxInputHarness } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.harness';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
 import {
   OauthProviderComponent, OauthProviderData,
 } from 'app/pages/credentials/backup-credentials/cloud-credentials-form/oauth-provider/oauth-provider.component';
@@ -17,6 +15,10 @@ import {
 describe('OauthProviderComponent', () => {
   let spectator: Spectator<OauthProviderComponent>;
   let loader: HarnessLoader;
+
+  const getInputOrNull = (name: string): Promise<TnInputHarness | null> => loader.getHarnessOrNull(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
   const createComponent = createComponentFactory({
     component: OauthProviderComponent,
     imports: [
@@ -58,7 +60,7 @@ describe('OauthProviderComponent', () => {
   });
 
   it('opens a modal with authentication flow when Log In To Provider is pressed', async () => {
-    const loginButton = await loader.getHarness(MatButtonHarness.with({ text: 'Log In To Provider' }));
+    const loginButton = await loader.getHarness(TnButtonHarness.with({ label: 'Log In To Provider' }));
     await loginButton.click();
 
     expect(spectator.inject<Window>(WINDOW).open).toHaveBeenCalledWith(
@@ -74,25 +76,20 @@ describe('OauthProviderComponent', () => {
   });
 
   it('updates form with client_id and client_secret when oAuth callback is called', async () => {
-    const loginButton = await loader.getHarness(MatButtonHarness.with({ text: 'Log In To Provider' }));
+    const loginButton = await loader.getHarness(TnButtonHarness.with({ label: 'Log In To Provider' }));
     await loginButton.click();
 
     spectator.click(spectator.query(byText('Configure manually')));
 
-    const form = await TestbedHarnessEnvironment.harnessForFixture(spectator.fixture, IxFormHarness);
-    const values = await form.getValues();
-
-    expect(values).toEqual({
-      'OAuth Client ID': 'id1234',
-      'OAuth Client Secret': 'secret1234',
-    });
+    expect(await (await getInputOrNull('client_id'))?.getValue()).toBe('id1234');
+    expect(await (await getInputOrNull('client_secret'))?.getValue()).toBe('secret1234');
   });
 
   it('emits (authenticated) output with response data when oAuth callback is called', async () => {
     const authenticatedOutput = jest.fn();
     spectator.component.authenticated.subscribe(authenticatedOutput);
 
-    const loginButton = await loader.getHarness(MatButtonHarness.with({ text: 'Log In To Provider' }));
+    const loginButton = await loader.getHarness(TnButtonHarness.with({ label: 'Log In To Provider' }));
     await loginButton.click();
 
     expect(authenticatedOutput).toHaveBeenCalledWith({
@@ -103,7 +100,7 @@ describe('OauthProviderComponent', () => {
   });
 
   it('calls removeEventListener when oAuth callback is called', async () => {
-    const loginButton = await loader.getHarness(MatButtonHarness.with({ text: 'Log In To Provider' }));
+    const loginButton = await loader.getHarness(TnButtonHarness.with({ label: 'Log In To Provider' }));
     await loginButton.click();
 
     expect(spectator.inject<Window>(WINDOW).removeEventListener)
@@ -116,8 +113,8 @@ describe('OauthProviderComponent', () => {
       expect(configureLink).toExist();
       expect(configureLink).toHaveText('Configure manually');
 
-      const clientIdInput = await loader.getHarnessOrNull(IxInputHarness.with({ label: 'OAuth Client ID' }));
-      const clientSecretInput = await loader.getHarnessOrNull(IxInputHarness.with({ label: 'OAuth Client Secret' }));
+      const clientIdInput = await getInputOrNull('client_id');
+      const clientSecretInput = await getInputOrNull('client_secret');
 
       expect(clientIdInput).toBeNull();
       expect(clientSecretInput).toBeNull();
@@ -127,8 +124,8 @@ describe('OauthProviderComponent', () => {
       const configureLink = spectator.query(byText('Configure manually'));
       spectator.click(configureLink);
 
-      const clientIdInput = await loader.getHarness(IxInputHarness.with({ label: 'OAuth Client ID' }));
-      const clientSecretInput = await loader.getHarness(IxInputHarness.with({ label: 'OAuth Client Secret' }));
+      const clientIdInput = await getInputOrNull('client_id');
+      const clientSecretInput = await getInputOrNull('client_secret');
 
       expect(clientIdInput).toExist();
       expect(clientSecretInput).toExist();
@@ -138,11 +135,11 @@ describe('OauthProviderComponent', () => {
       const configureLink = spectator.query(byText('Configure manually'));
       spectator.click(configureLink);
 
-      const loginButton = await loader.getHarness(MatButtonHarness.with({ text: 'Log In To Provider' }));
+      const loginButton = await loader.getHarness(TnButtonHarness.with({ label: 'Log In To Provider' }));
       await loginButton.click();
 
-      const clientIdInput = await loader.getHarnessOrNull(IxInputHarness.with({ label: 'OAuth Client ID' }));
-      const clientSecretInput = await loader.getHarnessOrNull(IxInputHarness.with({ label: 'OAuth Client Secret' }));
+      const clientIdInput = await getInputOrNull('client_id');
+      const clientSecretInput = await getInputOrNull('client_secret');
 
       expect(clientIdInput).toBeNull();
       expect(clientSecretInput).toBeNull();

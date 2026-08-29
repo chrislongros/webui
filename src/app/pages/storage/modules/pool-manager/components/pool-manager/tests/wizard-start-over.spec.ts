@@ -1,5 +1,6 @@
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import { TnRadioHarness } from '@truenas/ui-components';
 import { of } from 'rxjs';
 import { GiB } from 'app/constants/bytes.constant';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
@@ -8,7 +9,6 @@ import { DiskType } from 'app/enums/disk-type.enum';
 import { DetailsDisk } from 'app/interfaces/disk.interface';
 import { Enclosure } from 'app/interfaces/enclosure.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { IxRadioGroupHarness } from 'app/modules/forms/ix-forms/components/ix-radio-group/ix-radio-group.harness';
 import {
   PoolManagerComponent,
 } from 'app/pages/storage/modules/pool-manager/components/pool-manager/pool-manager.component';
@@ -124,7 +124,6 @@ describe('PoolManagerComponent – start over functionality', () => {
         }),
         mockCall('enclosure2.query', [] as Enclosure[]),
         mockCall('pool.query', []),
-        mockCall('pool.dataset.encryption_algorithm_choices', {}),
       ]),
       mockProvider(PoolWizardNameValidationService, {
         validatePoolName: () => of(null),
@@ -151,9 +150,14 @@ describe('PoolManagerComponent – start over functionality', () => {
 
     // ENCLOSURE step activated
     expect(await (await wizard.getActiveStep()).getLabel()).toBe('Enclosure Options');
-    const enclosureOptions = await (await wizard.getActiveStep()).getHarness(IxRadioGroupHarness);
-    await enclosureOptions.setValue('Limit Pool To A Single Enclosure');
-    await wizard.clickNext();
+    const enclosureOption = await (await wizard.getActiveStep()).getHarness(
+      TnRadioHarness.with({ label: 'Limit Pool To A Single Enclosure' }),
+    );
+    await enclosureOption.check();
+    // "Limit to a single enclosure" makes the enclosure control required, so the
+    // step's own "Next" is disabled with no enclosures to pick. The non-linear
+    // stepper still allows jumping to the next step by clicking its header.
+    await wizard.goToStep('Data');
 
     // DATA step activated
     expect(await (await wizard.getActiveStep()).getLabel()).toBe('Data');
@@ -190,8 +194,8 @@ describe('PoolManagerComponent – start over functionality', () => {
     });
     await wizard.clickNext();
 
-    // METADATA step activated
-    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Metadata (Optional)');
+    // Special step activated
+    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Special (Optional)');
     await wizard.fillStep({
       Layout: 'Stripe',
       'Disk Size': '20 GiB (HDD)',
@@ -243,7 +247,8 @@ describe('PoolManagerComponent – start over functionality', () => {
     // ENCLOSURE step activated and reset to default
     expect(await (await wizard.getActiveStep()).getLabel()).toBe('Enclosure Options');
     expect(await wizard.getStepValues()).toStrictEqual({
-      '': 'No Enclosure Dispersal Strategy',
+      // The group carries no visible field label, so it indexes under its accessible name.
+      'Enclosure dispersal strategy': 'No Enclosure Dispersal Strategy',
     });
     await wizard.clickNext();
 
@@ -282,8 +287,8 @@ describe('PoolManagerComponent – start over functionality', () => {
     });
     await wizard.clickNext();
 
-    // METADATA step activated and reset to default
-    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Metadata (Optional)');
+    // Special step activated and reset to default
+    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Special (Optional)');
     expect(await wizard.getStepValues()).toStrictEqual({
       Layout: '',
       'Disk Size': '',

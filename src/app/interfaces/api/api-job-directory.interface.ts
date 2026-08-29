@@ -14,6 +14,7 @@ import { ConfigResetParams } from 'app/interfaces/config-reset-params.interface'
 import { PullContainerImageParams, PullContainerImageResponse } from 'app/interfaces/container-image.interface';
 import {
   Container,
+  ContainerDeleteParams,
   CreateContainer,
 } from 'app/interfaces/container.interface';
 import { CoreBulkQuery, CoreBulkResponse } from 'app/interfaces/core-bulk.interface';
@@ -30,7 +31,6 @@ import { DockerConfig, DockerConfigUpdate } from 'app/interfaces/docker-config.i
 import { ExportParams } from 'app/interfaces/export-params.interface';
 import { FailoverUpgradeParams } from 'app/interfaces/failover.interface';
 import { FilesystemPutParams, FilesystemSetPermParams } from 'app/interfaces/filesystem-stat.interface';
-import { IpmiEvent } from 'app/interfaces/ipmi.interface';
 import { Job } from 'app/interfaces/job.interface';
 import { KmipConfig, KmipConfigUpdate } from 'app/interfaces/kmip-config.interface';
 import { MailConfigUpdate, SendMailParams } from 'app/interfaces/mail-config.interface';
@@ -71,11 +71,11 @@ export interface ApiJobDirectory {
   // Certificate
   'certificate.create': { params: [CertificateCreate]; response: Certificate };
   'certificate.delete': { params: [id: number, force?: boolean]; response: boolean };
-  'certificate.update': { params: [id: number, update: CertificateUpdate]; response: Certificate };
+  'certificate.update': { params: [id: number, update: Partial<CertificateUpdate>]; response: Certificate };
 
   // App
   'app.create': { params: [AppCreate]; response: App };
-  'app.update': { params: [string, AppUpdate]; response: App };
+  'app.update': { params: [string, Partial<AppUpdate>]; response: App };
   'app.start': { params: AppStartQueryParams; response: void };
   'app.stop': { params: AppStartQueryParams; response: void };
   'app.redeploy': { params: AppStartQueryParams; response: void };
@@ -124,13 +124,12 @@ export interface ApiJobDirectory {
 
   // IPMI
   'ipmi.sel.clear': { params: void; response: void };
-  'ipmi.sel.elist': { params: void; response: IpmiEvent[] };
 
   // KMIP
-  'kmip.update': { params: [KmipConfigUpdate]; response: KmipConfig };
+  'kmip.update': { params: [Partial<KmipConfigUpdate>]; response: KmipConfig };
 
   // Docker
-  'docker.update': { params: [DockerConfigUpdate]; response: DockerConfig };
+  'docker.update': { params: [Partial<DockerConfigUpdate>]; response: DockerConfig };
 
   // Mail
   'mail.send': { params: [SendMailParams, MailConfigUpdate]; response: boolean };
@@ -146,7 +145,7 @@ export interface ApiJobDirectory {
   'pool.remove': { params: PoolRemoveParams; response: void };
   'pool.replace': { params: [id: number, params: PoolReplaceParams]; response: boolean };
   'pool.scrub': { params: PoolScrubTaskParams; response: void };
-  'pool.update': { params: [id: number, update: UpdatePool]; response: Pool };
+  'pool.update': { params: [id: number, update: Partial<UpdatePool>]; response: Pool };
   'pool.dataset.change_key': { params: [id: string, params: DatasetChangeKeyParams]; response: void };
   'pool.dataset.encryption_summary': {
     params: [path: string, params?: DatasetEncryptionSummaryQueryParams];
@@ -176,10 +175,10 @@ export interface ApiJobDirectory {
   // System
   'system.reboot': { params: RebootParams; response: void };
   'system.shutdown': { params: ShutdownParams; response: void };
-  'system.security.update': { params: [SystemSecurityConfig]; response: void };
+  'system.security.update': { params: [Partial<SystemSecurityConfig>]; response: void };
 
   // SystemDataset
-  'systemdataset.update': { params: [SystemDatasetUpdate]; response: SystemDatasetConfig };
+  'systemdataset.update': { params: [Partial<SystemDatasetUpdate>]; response: SystemDatasetConfig };
 
   // TrueNAS
   'truenas.set_production': {
@@ -190,7 +189,7 @@ export interface ApiJobDirectory {
   // Tunable
   'tunable.create': { params: [TunableCreate]; response: Tunable };
   'tunable.delete': { params: [id: number]; response: true };
-  'tunable.update': { params: [id: number, update: TunableUpdate]; response: Tunable };
+  'tunable.update': { params: [id: number, update: Partial<TunableUpdate>]; response: Tunable };
 
   // Update
   'update.file': { params: [{ resume: boolean }?]; response: void };
@@ -198,6 +197,7 @@ export interface ApiJobDirectory {
 
   // Container
   'container.create': { params: [CreateContainer]; response: Container };
+  'container.delete': { params: ContainerDeleteParams; response: boolean };
   'container.migrate': { params: [containerId: number]; response: boolean };
   'container.stop': { params: [containerId: number, params?: { force?: boolean; force_after_timeout?: boolean }]; response: void };
 

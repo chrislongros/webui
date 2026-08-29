@@ -1,21 +1,18 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { FormBuilder } from '@ngneat/reactive-forms';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
+import { TnCheckboxHarness, TnSelectHarness } from '@truenas/ui-components';
 import { mockCall, mockJob, mockApi } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { SyslogLevel, SyslogTransport } from 'app/enums/syslog.enum';
 import { AdvancedConfig } from 'app/interfaces/advanced-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { SyslogFormComponent } from 'app/pages/system/advanced/syslog/syslog-form/syslog-form.component';
+import { selectAdvancedConfig } from 'app/store/system-config/system-config.selectors';
 
 describe('SyslogFormComponent', () => {
   let spectator: Spectator<SyslogFormComponent>;
@@ -28,6 +25,13 @@ describe('SyslogFormComponent', () => {
     expect(array.length).toBe(expectedLength);
   };
 
+  const getCheckbox = (name: string): Promise<TnCheckboxHarness> => loader.getHarness(
+    TnCheckboxHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getSelect = (name: string): Promise<TnSelectHarness> => loader.getHarness(
+    TnSelectHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+
   const createComponent = createComponentFactory({
     component: SyslogFormComponent,
     imports: [
@@ -35,17 +39,6 @@ describe('SyslogFormComponent', () => {
     ],
     providers: [
       mockApi([
-        mockCall('system.advanced.config', {
-          fqdn_syslog: true,
-          sysloglevel: SyslogLevel.Error,
-          syslog_audit: false,
-          syslogservers: [
-            {
-              host: 'existing.server.com',
-              transport: SyslogTransport.Udp,
-            },
-          ],
-        } as AdvancedConfig),
         mockCall('system.advanced.syslog_certificate_choices', {
           1: 'Certificate 1',
           2: 'Certificate 2',
@@ -57,25 +50,24 @@ describe('SyslogFormComponent', () => {
         mockCall('system.advanced.update'),
         mockJob('systemdataset.update'),
       ]),
-      mockProvider(SlideIn, {
-        open: jest.fn(() => SlideInResult.empty()),
-      }),
       mockProvider(DialogService),
-      provideMockStore(),
-      mockProvider(SlideInRef, {
-        close: jest.fn(),
-        requireConfirmationWhen: jest.fn(),
-        getData: jest.fn(() => ({
-          fqdn_syslog: true,
-          sysloglevel: SyslogLevel.Error,
-          syslog_audit: false,
-          syslogservers: [
-            {
-              host: 'existing.server.com',
-              transport: SyslogTransport.Udp,
-            },
-          ],
-        })),
+      provideMockStore({
+        selectors: [
+          {
+            selector: selectAdvancedConfig,
+            value: {
+              fqdn_syslog: true,
+              sysloglevel: SyslogLevel.Error,
+              syslog_audit: false,
+              syslogservers: [
+                {
+                  host: 'existing.server.com',
+                  transport: SyslogTransport.Udp,
+                },
+              ],
+            } as AdvancedConfig,
+          },
+        ],
       }),
       mockAuth(),
     ],
@@ -88,28 +80,22 @@ describe('SyslogFormComponent', () => {
   });
 
   it('loads current settings for syslog form and shows them', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    const values = await form.getValues();
-
-    expect(values).toEqual({
-      'Use FQDN for Logging': true,
-      'Syslog Level': 'Error',
-      'Include Audit Logs': false,
-      Host: 'existing.server.com',
-      Transport: 'UDP',
-    });
+    expect(await (await getCheckbox('fqdn_syslog')).isChecked()).toBe(true);
+    expect(await (await getSelect('sysloglevel')).getDisplayText()).toBe('Error');
+    expect(await (await getCheckbox('syslog_audit')).isChecked()).toBe(false);
+    expect(spectator.component.syslogServersArray.at(0).value.host).toBe('existing.server.com');
   });
 
   it('saves advanced config when form is submitted', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    await form.fillForm({
-      'Use FQDN for Logging': false,
-      'Syslog Level': 'Info',
-      'Include Audit Logs': true,
-    });
+    await (await getCheckbox('fqdn_syslog')).uncheck();
+    await (await getSelect('sysloglevel')).selectOption('Info');
+    await (await getCheckbox('syslog_audit')).check();
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+    spectator.component.submit();
+
+    spectator.detectChanges();
 
     expect(api.call).toHaveBeenCalledWith('system.advanced.update', [
       {
@@ -127,7 +113,7 @@ describe('SyslogFormComponent', () => {
     ]);
   });
 
-  it('filters out servers without host on save', async () => {
+  it('filters out servers without host on save', () => {
     // Directly add an empty server to the form array
     spectator.component.syslogServersArray.push(spectator.inject(FormBuilder).group({
       host: [''],
@@ -136,8 +122,9 @@ describe('SyslogFormComponent', () => {
     }));
 
     // Submit with an empty second server
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+    spectator.component.submit();
+    spectator.detectChanges();
 
     // Should only save servers with hosts
     expect(api.call).toHaveBeenCalledWith('system.advanced.update', [
@@ -153,7 +140,7 @@ describe('SyslogFormComponent', () => {
     ]);
   });
 
-  it('handles TLS certificate as integer', async () => {
+  it('handles TLS certificate as integer', () => {
     // Add a server with TLS and certificate
     spectator.component.addServer();
     spectator.component.syslogServersArray.at(1).patchValue({
@@ -163,8 +150,9 @@ describe('SyslogFormComponent', () => {
     });
 
     // Submit the form
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+    spectator.component.submit();
+    spectator.detectChanges();
 
     // Should keep certificate as integer
     expect(api.call).toHaveBeenCalledWith('system.advanced.update', [
@@ -236,14 +224,15 @@ describe('SyslogFormComponent', () => {
     expect(newServerGroup.controls.tls_certificate.hasError('required')).toBe(false);
   });
 
-  it('allows configuration with no syslog servers', async () => {
+  it('allows configuration with no syslog servers', () => {
     // Remove the existing server
     spectator.component.removeServer(0);
     expectArrayLength(spectator.component.syslogServersArray, 0);
 
     // Save with no servers
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+    spectator.component.submit();
+    spectator.detectChanges();
 
     expect(api.call).toHaveBeenCalledWith('system.advanced.update', [
       expect.objectContaining({

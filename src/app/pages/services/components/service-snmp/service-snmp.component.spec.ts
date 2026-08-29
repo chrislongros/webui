@@ -1,15 +1,19 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { TestBed } from '@angular/core/testing';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { createRoutingFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
-import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
+import {
+  TnCheckboxHarness, TnInputHarness, TnSelectHarness,
+} from '@truenas/ui-components';
+import { of } from 'rxjs';
+import { failApiCall, mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { SnmpConfig } from 'app/interfaces/snmp-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { ixFormTestingProviders } from 'app/modules/forms/ix-forms/testing/ix-form-testing.helpers';
 import { ApiService } from 'app/modules/websocket/api.service';
+import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 import { ServiceSnmpComponent } from './service-snmp.component';
 
 describe('ServiceSnmpComponent', () => {
@@ -17,11 +21,18 @@ describe('ServiceSnmpComponent', () => {
   let api: ApiService;
   let loader: HarnessLoader;
 
-  const slideInRef: SlideInRef<undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
+  const getInput = (name: string): Promise<TnInputHarness> => loader.getHarness(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getSelect = (name: string): Promise<TnSelectHarness> => loader.getHarness(
+    TnSelectHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const getCheckbox = (name: string): Promise<TnCheckboxHarness> => loader.getHarness(
+    TnCheckboxHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
+  const hasInput = async (name: string): Promise<boolean> => (await loader.getAllHarnesses(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  )).length > 0;
 
   const createComponent = createRoutingFactory({
     component: ServiceSnmpComponent,
@@ -45,10 +56,9 @@ describe('ServiceSnmpComponent', () => {
           v3_privpassphrase: '87654321',
           options: 'leave_pidfile=true',
           zilstat: true,
-          loglevel: 4,
         } as SnmpConfig),
       ]),
-      mockProvider(SlideInRef, slideInRef),
+      ...ixFormTestingProviders(),
       mockAuth(),
     ],
   });
@@ -59,50 +69,59 @@ describe('ServiceSnmpComponent', () => {
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
   });
 
+  it('blocks Save when the initial config load fails', () => {
+    expect(spectator.component.canSubmit()).toBe(true);
+
+    const showErrorModal = jest.spyOn(spectator.inject(ErrorHandlerService), 'showErrorModal')
+      .mockReturnValue(of(true));
+    failApiCall(api, 'snmp.config');
+
+    // A fresh instance rather than a second `ngOnInit()` on the one from `beforeEach`:
+    // re-initialising an already-initialised form re-registers its valueChanges subscriptions,
+    // so the assertion would hinge on double-init being harmless.
+    const failed = TestBed.createComponent(ServiceSnmpComponent);
+    failed.detectChanges();
+
+    expect(showErrorModal).toHaveBeenCalled();
+    // `hasLoadFailed` is what the panel reads (for its banner) and what `<ix-form>`'s
+    // extraDisabled is bound to; that binding blocking Save is covered in the ix-form spec.
+    expect(failed.componentInstance.hasLoadFailed()).toBe(true);
+    expect(failed.componentInstance.canSubmit()).toBe(false);
+  });
+
   it('loads and shows current SNMP settings', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    const values = await form.getValues();
-
     expect(api.call).toHaveBeenCalledWith('snmp.config');
-    expect(values).toEqual({
-      Location: 'My location',
-      Contact: 'test@truenas.org',
-      Community: 'gated',
 
-      'SNMP v3 Support': true,
-      Username: 'john',
-      'Authentication Type': 'MD5',
-      Password: '12345678',
-      'Privacy Protocol': 'AES',
-      'Privacy Passphrase': '87654321',
+    expect(await (await getInput('location')).getValue()).toBe('My location');
+    expect(await (await getInput('contact')).getValue()).toBe('test@truenas.org');
+    expect(await (await getInput('community')).getValue()).toBe('gated');
 
-      'Auxiliary Parameters': 'leave_pidfile=true',
-      'Expose zilstat via SNMP': true,
-      'Log Level': 'Warning',
-    });
+    expect(await (await getCheckbox('v3')).isChecked()).toBe(true);
+    expect(await (await getInput('v3_username')).getValue()).toBe('john');
+    expect(await (await getSelect('v3_authtype')).getDisplayText()).toBe('MD5');
+    expect(await (await getInput('v3_password')).getValue()).toBe('12345678');
+    expect(await (await getSelect('v3_privproto')).getDisplayText()).toBe('AES');
+    expect(await (await getInput('v3_privpassphrase')).getValue()).toBe('87654321');
+
+    expect(await (await getInput('options')).getValue()).toBe('leave_pidfile=true');
+    expect(await (await getCheckbox('zilstat')).isChecked()).toBe(true);
   });
 
   it('saves SNMP settings when form is submitted', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    await form.fillForm({
-      Location: 'New location',
-      Contact: 'contact@truenas.org',
-      Community: 'public',
+    await (await getInput('location')).setValue('New location');
+    await (await getInput('contact')).setValue('contact@truenas.org');
+    await (await getInput('community')).setValue('public');
 
-      'SNMP v3 Support': true,
-      Username: 'will',
-      'Authentication Type': 'SHA',
-      Password: 'abcd1234',
-      'Privacy Protocol': 'DES',
-      'Privacy Passphrase': '4321dcba',
+    await (await getInput('v3_username')).setValue('will');
+    await (await getSelect('v3_authtype')).selectOption('SHA');
+    await (await getInput('v3_password')).setValue('abcd1234');
+    await (await getSelect('v3_privproto')).selectOption('DES');
+    await (await getInput('v3_privpassphrase')).setValue('4321dcba');
 
-      'Auxiliary Parameters': 'leave_pidfile=false',
-      'Expose zilstat via SNMP': false,
-      'Log Level': 'Error',
-    });
+    await (await getInput('options')).setValue('leave_pidfile=false');
+    await (await getCheckbox('zilstat')).uncheck();
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    spectator.component.submit();
 
     expect(api.call).toHaveBeenCalledWith('snmp.update', [{
       location: 'New location',
@@ -118,25 +137,27 @@ describe('ServiceSnmpComponent', () => {
 
       options: 'leave_pidfile=false',
       zilstat: false,
-      loglevel: 3,
     }]);
   });
 
+  it('submits an empty authentication type when the selection is cleared', async () => {
+    await (await getSelect('v3_authtype')).selectOption('--');
+
+    spectator.component.submit();
+
+    expect(api.call).toHaveBeenCalledWith('snmp.update', [
+      expect.objectContaining({ v3_authtype: '' }),
+    ]);
+  });
+
   it('does not show v3 fields if SNMP v3 Support checkbox is off', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    await form.fillForm({
-      'SNMP v3 Support': false,
-    });
+    await (await getCheckbox('v3')).uncheck();
 
-    const labels = await form.getLabels();
-    expect(labels).not.toContain('Username');
-    expect(labels).not.toContain('Authentication Type');
-    expect(labels).not.toContain('Password');
-    expect(labels).not.toContain('Privacy Protocol');
-    expect(labels).not.toContain('Privacy Passphrase');
+    expect(await hasInput('v3_username')).toBe(false);
+    expect(await hasInput('v3_password')).toBe(false);
+    expect(await hasInput('v3_privpassphrase')).toBe(false);
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    spectator.component.submit();
 
     expect(api.call).toHaveBeenCalledWith('snmp.update', [
       expect.objectContaining({

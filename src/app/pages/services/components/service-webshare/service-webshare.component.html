@@ -1,40 +1,22 @@
-<ix-modal-header
+<ix-form
+  [formGroup]="form"
   [requiredRoles]="requiredRoles"
-  [title]="'WebShare' | translate"
-  [loading]="isFormLoading()"
-></ix-modal-header>
+  [submitHandler]="handleSubmit"
+  (closed)="closed.emit($event)"
+>
+  <tn-form-section>
+    <tn-form-field
+      [tooltip]="helptext.search_enabled_tooltip | translate"
+      [hint]="isTruenasConnectConfigured() ? '' : ('TrueSearch requires TrueNAS Connect to be configured.' | translate)"
+    >
+      <tn-checkbox formControlName="search" [label]="'Enable TrueSearch' | translate"></tn-checkbox>
+    </tn-form-field>
 
-<mat-card class="card">
-  <mat-card-content>
-    <form class="ix-form-container" [formGroup]="form" (submit)="onSubmit()">
-      <ix-fieldset>
-        <ix-checkbox
-          formControlName="search"
-          [label]="'Enable TrueSearch' | translate"
-          [tooltip]="helptext.search_enabled_tooltip | translate"
-        ></ix-checkbox>
-
-        <ix-select
-          formControlName="passkey"
-          [label]="'Passkey' | translate"
-          [tooltip]="helptext.passkey_tooltip | translate"
-          [options]="passkeyOptions$"
-          [required]="true"
-        ></ix-select>
-      </ix-fieldset>
-
-      <ix-form-actions>
-        <button
-          *ixRequiresRoles="requiredRoles"
-          mat-button
-          type="submit"
-          color="primary"
-          ixTest="save"
-          [disabled]="form.invalid || isFormLoading()"
-        >
-          {{ 'Save' | translate }}
-        </button>
-      </ix-form-actions>
-    </form>
-  </mat-card-content>
-</mat-card>
+    <tn-form-field
+      [label]="'Passkey' | translate"
+      [tooltip]="helptext.passkey_tooltip | translate"
+    >
+      <tn-select formControlName="passkey" [options]="passkeyOptions"></tn-select>
+    </tn-form-field>
+  </tn-form-section>
+</ix-form>

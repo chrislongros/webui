@@ -1,25 +1,24 @@
+import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { AsyncPipe } from '@angular/common';
 import {
   ChangeDetectionStrategy, Component, computed, inject, signal,
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ReactiveFormsModule, Validators } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import {
-  MAT_DIALOG_DATA, MatDialogActions, MatDialogClose, MatDialogContent, MatDialogRef, MatDialogTitle,
-} from '@angular/material/dialog';
 import { FormBuilder } from '@ngneat/reactive-forms';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import {
+  TnButtonComponent, TnCheckboxComponent, TnDialogShellComponent, TnFormFieldComponent, TnInputComponent,
+  TnSelectComponent,
+} from '@truenas/ui-components';
+import {
   map, Observable, of, startWith,
 } from 'rxjs';
+import { macAddressInvalidMessage, macAddressRegex } from 'app/constants/mac-address.constant';
 import { ContainerNicDeviceType, containerNicDeviceTypeLabels } from 'app/enums/container.enum';
+import { containersHelptext } from 'app/helptext/containers/containers';
 import { ContainerNicDevice } from 'app/interfaces/container.interface';
-import { IxCheckboxComponent } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
-import { IxSelectComponent } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.component';
 import { IxValidatorsService } from 'app/modules/forms/ix-forms/services/ix-validators.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 
 export interface ContainerNicFormDialogData {
   nic?: string; // NIC key for adding
@@ -31,17 +30,14 @@ export interface ContainerNicFormDialogData {
   templateUrl: './container-nic-form-dialog.component.html',
   standalone: true,
   imports: [
-    MatDialogContent,
-    MatDialogActions,
-    MatDialogClose,
-    MatDialogTitle,
-    TestDirective,
+    TnDialogShellComponent,
+    TnCheckboxComponent,
     ReactiveFormsModule,
-    IxCheckboxComponent,
-    IxInputComponent,
-    IxSelectComponent,
+    TnFormFieldComponent,
+    TnInputComponent,
+    TnSelectComponent,
     AsyncPipe,
-    MatButton,
+    TnButtonComponent,
     TranslateModule,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -50,8 +46,8 @@ export class ContainerNicFormDialog {
   private fb = inject(FormBuilder);
   private ixValidator = inject(IxValidatorsService);
   private translate = inject(TranslateService);
-  private matDialogRef = inject<MatDialogRef<ContainerNicFormDialog>>(MatDialogRef);
-  private dialogData = inject<ContainerNicFormDialogData>(MAT_DIALOG_DATA);
+  protected dialogRef = inject<DialogRef<unknown, ContainerNicFormDialog>>(DialogRef);
+  private dialogData = inject<ContainerNicFormDialogData>(DIALOG_DATA);
 
   protected readonly isEditMode = computed(() => !!this.dialogData.device);
 
@@ -79,10 +75,12 @@ export class ContainerNicFormDialog {
   protected readonly form = this.fb.group({
     type: [this.getInitialType(), Validators.required],
     use_default: [this.getInitialUseDefault()],
+    // Middleware only accepts colon-separated MACs (libvirt never parsed the dash-separated,
+    // unseparated or Cisco dotted forms, so those saved fine and then failed at container start).
     mac: [this.getInitialMac(), [
       this.ixValidator.withMessage(
-        Validators.pattern('^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$|^([0-9A-Fa-f]{4}\\.){2}([0-9A-Fa-f]{4})$'),
-        this.translate.instant('Not a valid MAC address'),
+        Validators.pattern(macAddressRegex),
+        this.translate.instant(macAddressInvalidMessage),
       ),
     ]],
     trust_guest_rx_filters: [this.getInitialTrustGuestRxFilters()],
@@ -123,6 +121,12 @@ export class ContainerNicFormDialog {
     startWith(true),
   );
 
+  protected readonly macTooltip = computed(() => {
+    return this.isEditMode()
+      ? this.translate.instant(containersHelptext.macEditTooltip)
+      : this.translate.instant(containersHelptext.macTooltip);
+  });
+
   protected readonly useDefault = toSignal(this.form.controls.use_default.value$);
   protected readonly selectedType = toSignal(this.form.controls.type.value$);
   protected readonly isVirtio = computed(() => this.selectedType() === ContainerNicDeviceType.Virtio);
@@ -151,7 +155,7 @@ export class ContainerNicFormDialog {
         result.mac = this.form.value.mac;
       }
 
-      this.matDialogRef.close(result);
+      this.dialogRef.close(result);
     } else {
       // For E1000: explicitly exclude trust_guest_rx_filters
       const result: {
@@ -169,7 +173,7 @@ export class ContainerNicFormDialog {
         result.mac = this.form.value.mac;
       }
 
-      this.matDialogRef.close(result);
+      this.dialogRef.close(result);
     }
   }
 }

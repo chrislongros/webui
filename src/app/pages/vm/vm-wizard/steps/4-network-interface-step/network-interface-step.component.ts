@@ -1,20 +1,28 @@
+import { AsyncPipe } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, Validators, ReactiveFormsModule } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatStepperPrevious, MatStepperNext } from '@angular/material/stepper';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
+import {
+  TnButtonComponent,
+  TnCheckboxComponent,
+  TnFormFieldComponent,
+  TnFormSectionComponent,
+  TnInputComponent,
+  TnSelectComponent,
+  TnStepperNextDirective,
+  TnStepperPreviousDirective,
+} from '@truenas/ui-components';
 import { of } from 'rxjs';
+import { macAddressInvalidMessage, macAddressRegex } from 'app/constants/mac-address.constant';
 import { VmNicType, vmNicTypeLabels } from 'app/enums/vm.enum';
 import { nicChoicesToOptions } from 'app/helpers/operators/options.operators';
 import { mapToOptions } from 'app/helpers/options.helper';
+import { stepCompletedSignal } from 'app/helpers/step-completed-signal.helper';
 import { helptextVmWizard } from 'app/helptext/vm/vm-wizard/vm-wizard';
 import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
-import { IxCheckboxComponent } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
-import { IxSelectComponent } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.component';
+import { IxValidatorsService } from 'app/modules/forms/ix-forms/services/ix-validators.service';
 import { SummaryProvider, SummarySection } from 'app/modules/summary/summary.interface';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
@@ -24,15 +32,17 @@ import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
   standalone: true,
   imports: [
+    AsyncPipe,
     ReactiveFormsModule,
-    IxSelectComponent,
-    IxInputComponent,
-    IxCheckboxComponent,
+    TnFormFieldComponent,
+    TnFormSectionComponent,
+    TnSelectComponent,
+    TnInputComponent,
+    TnCheckboxComponent,
     FormActionsComponent,
-    MatButton,
-    MatStepperPrevious,
-    TestDirective,
-    MatStepperNext,
+    TnButtonComponent,
+    TnStepperPreviousDirective,
+    TnStepperNextDirective,
     TranslateModule,
   ],
 })
@@ -43,13 +53,20 @@ export class NetworkInterfaceStepComponent implements OnInit, SummaryProvider {
   private cdr = inject(ChangeDetectorRef);
   private errorHandler = inject(ErrorHandlerService);
   private destroyRef = inject(DestroyRef);
+  private validators = inject(IxValidatorsService);
 
   form = this.formBuilder.nonNullable.group({
     nic_type: [VmNicType.Virtio, Validators.required],
-    nic_mac: [helptextVmWizard.NIC_mac_value, Validators.pattern(/\b([0-9A-F]{2}[:-]){5}([0-9A-F]){2}\b/i)],
+    nic_mac: [helptextVmWizard.NIC_mac_value, this.validators.withMessage(
+      Validators.pattern(macAddressRegex),
+      this.translate.instant(macAddressInvalidMessage),
+    )],
     nic_attach: ['', Validators.required],
     trust_guest_rx_filters: [false],
   });
+
+  // Drives the stepper's linear gating (replaces mat's [stepControl]).
+  readonly completed = stepCompletedSignal(this.form);
 
   readonly helptext = helptextVmWizard;
   readonly nicTypeOptions$ = of(mapToOptions(vmNicTypeLabels, this.translate));

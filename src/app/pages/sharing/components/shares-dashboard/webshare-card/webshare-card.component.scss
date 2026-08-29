@@ -1,36 +1,42 @@
-mat-card {
-  height: 100%;
-}
+@import '../card-flush-table';
+@import '../card-service-toggle';
+@import '../../experimental-badge';
 
-.card-title {
+@include card-flush-table;
+@include card-service-toggle;
+@include experimental-badge;
+
+// The badge sits outside the title link so it doesn't bloat the link's accessible name.
+.card-header-title {
   align-items: center;
-  display: flex;
+  display: inline-flex;
 
-  tn-icon {
-    margin-left: 5px;
+  .experimental-badge {
+    margin-left: 8px;
   }
 }
 
-.info-message {
-  align-items: center;
-  background-color: var(--bg1);
-  border: 1px solid var(--lines);
-  border-radius: 4px;
-  display: flex;
-  gap: 12px;
+.card-title-link {
+  color: inherit;
+  display: inline-flex;
+  text-decoration: none;
+}
+
+tn-banner {
+  display: block;
   margin-bottom: 16px;
-  padding: 16px;
-
-  tn-icon {
-    color: var(--primary);
-  }
 
   &.clickable {
     cursor: pointer;
-    transition: background-color 0.2s ease;
+  }
+}
 
-    &:hover {
-      background-color: var(--bg2);
-    }
+.webshare-name-container {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+
+  .home-icon {
+    flex-shrink: 0;
   }
 }

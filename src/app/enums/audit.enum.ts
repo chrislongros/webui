@@ -38,44 +38,27 @@ export enum AuditEvent {
   ModuleLoad = 'MODULE-LOAD',
   Service = 'SERVICE',
   TtyRecord = 'TTY_RECORD',
+  WebshellAuthentication = 'WEBSHELL_AUTHENTICATION',
+  WebshellLogout = 'WEBSHELL_LOGOUT',
 }
+
+export enum WebshellType {
+  App = 'APP',
+  Container = 'CONTAINER',
+  Host = 'HOST',
+  Vm = 'VM',
+}
+
+export const webshellTypeLabels = new Map<WebshellType, string>([
+  [WebshellType.App, T('App')],
+  [WebshellType.Container, T('Container')],
+  [WebshellType.Host, T('Host')],
+  [WebshellType.Vm, T('VM')],
+]);
 
 export const auditServiceLabels = new Map<AuditService, string>([
   [AuditService.Smb, T('SMB')],
   [AuditService.Middleware, T('Middleware')],
   [AuditService.Sudo, T('Sudo')],
   [AuditService.System, T('System')],
-]);
-
-export const auditEventLabels = new Map<AuditEvent, string>([
-  [AuditEvent.Connect, T('Connect')],
-  [AuditEvent.Disconnect, T('Disconnect')],
-  [AuditEvent.Create, T('Create')],
-  [AuditEvent.Close, T('Close')],
-  [AuditEvent.Read, T('Read')],
-  [AuditEvent.Write, T('Write')],
-  [AuditEvent.OffloadRead, T('Offload Read')],
-  [AuditEvent.OffloadWrite, T('Offload Write')],
-  [AuditEvent.SetAcl, T('Set ACL')],
-  [AuditEvent.Rename, T('Rename')],
-  [AuditEvent.Unlink, T('Unlink')],
-  [AuditEvent.SetAttr, T('Set Attribute')],
-  [AuditEvent.SetQuota, T('Set Quota')],
-  [AuditEvent.Authentication, T('Authentication')],
-  [AuditEvent.MethodCall, T('Method Call')],
-  [AuditEvent.Accept, T('Accept')],
-  [AuditEvent.Reject, T('Reject')],
-  [AuditEvent.Reboot, T('Reboot')],
-  [AuditEvent.Logout, T('Logout')],
-  [AuditEvent.Login, T('Login')],
-  [AuditEvent.Generic, T('Generic')],
-  [AuditEvent.Credential, T('Credential')],
-  [AuditEvent.Escalation, T('Escalation')],
-  [AuditEvent.Privileged, T('Privileged')],
-  [AuditEvent.Export, T('Export')],
-  [AuditEvent.Identity, T('Identity')],
-  [AuditEvent.TimeChange, T('Time Change')],
-  [AuditEvent.ModuleLoad, T('Module Load')],
-  [AuditEvent.Service, T('Service')],
-  [AuditEvent.TtyRecord, T('TTY Record')],
 ]);

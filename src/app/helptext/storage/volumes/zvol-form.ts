@@ -79,11 +79,6 @@ export const helptextZvol = {
  an encryption <i>Key</i> or a user-defined <i>Passphrase</i>. Creating a new key file\
  invalidates any previously downloaded key file for this dataset.\
  Delete any previous key file backups and back up the new key file.'),
-    algorithmLabel: T('Algorithm'),
-    algorithmTooltip: T('Mathematical instruction sets that determine how plaintext is converted\
- into ciphertext. See\
- <a href="https://en.wikipedia.org/wiki/Advanced_Encryption_Standard" target="_blank">Advanced Encryption Standard (AES)</a>\
- for more details.'),
     passphraseLabel: T('Passphrase'),
     passphraseTooltip: T('User-defined string used to decrypt the dataset. Can be used instead of an encryption key.<br>\
  WARNING: the passphrase is the only means to decrypt the information stored in this dataset. Be sure to create a\
@@ -101,9 +96,9 @@ export const helptextZvol = {
     keyTooltip: T('Enter or paste a string to use as the encryption key for this dataset.'),
   },
 
-  useSpecialVdevsTooltip: T('Enable to store data in special metadata vdevs.\
+  useSpecialVdevsTooltip: T('Enable to store data in special vdevs.\
  When enabled, you can customize the threshold size that determines which blocks are stored in special vdevs.\
- Before enabling this option, ensure a special/metadata vdev has been added to the pool.'),
+ Before enabling this option, ensure a special vdev has been added to the pool.'),
 
   specialSmallBlocksCustomTooltip: T('Specify the threshold size for storing data in special vdevs.\
  Data blocks smaller than or equal to this value will be stored in special vdevs, while larger blocks will use regular vdevs.\

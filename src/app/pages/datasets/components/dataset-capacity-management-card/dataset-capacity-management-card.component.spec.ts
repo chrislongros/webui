@@ -1,12 +1,13 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import { TnButtonHarness, TnCardComponent } from '@truenas/ui-components';
 import { MockComponents, MockModule } from 'ng-mocks';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { of } from 'rxjs';
 import { mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
+import { DatasetTier } from 'app/enums/dataset-tier.enum';
 import { DatasetType } from 'app/enums/dataset.enum';
 import { OnOff } from 'app/enums/on-off.enum';
 import { ZfsPropertySource } from 'app/enums/zfs-property-source.enum';
@@ -14,12 +15,13 @@ import { DatasetQuota } from 'app/interfaces/dataset-quota.interface';
 import { DatasetDetails } from 'app/interfaces/dataset.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { FileSizePipe } from 'app/modules/pipes/file-size/file-size.pipe';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
 import { DatasetCapacityManagementCardComponent } from 'app/pages/datasets/components/dataset-capacity-management-card/dataset-capacity-management-card.component';
 import { DatasetCapacitySettingsComponent } from 'app/pages/datasets/components/dataset-capacity-management-card/dataset-capacity-settings/dataset-capacity-settings.component';
 import { SpaceManagementChartComponent } from 'app/pages/datasets/components/dataset-capacity-management-card/space-management-chart/space-management-chart.component';
 import { DatasetTreeStore } from 'app/pages/datasets/store/dataset-store.service';
+import { SharingTierService } from 'app/pages/sharing/components/sharing-tier.service';
 
 const datasetQuotas = {
   refreservation: {
@@ -96,8 +98,12 @@ describe('DatasetCapacityManagementCardComponent', () => {
           },
         }]),
       }),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         open: jest.fn(() => SlideInResult.empty()),
+      }),
+      mockProvider(SharingTierService, {
+        getTierConfig: () => of({ enabled: false }),
+        tierEnabled: () => false,
       }),
     ],
   });
@@ -112,8 +118,13 @@ describe('DatasetCapacityManagementCardComponent', () => {
     });
 
     it('shows header', () => {
-      expect(spectator.query('mat-card-header h3')).toHaveText('Space Management');
-      expect(spectator.query('mat-card-header button')).toHaveText('Edit');
+      expect(spectator.query(TnCardComponent)!.title()).toBe('Space Management');
+    });
+
+    it('shows Edit button in footer', async () => {
+      const editLoader = TestbedHarnessEnvironment.loader(spectator.fixture);
+      const editButtons = await editLoader.getAllHarnesses(TnButtonHarness.with({ label: 'Edit' }));
+      expect(editButtons).toHaveLength(1);
     });
 
     it('shows SpaceManagementChartComponent', () => {
@@ -161,8 +172,13 @@ describe('DatasetCapacityManagementCardComponent', () => {
     });
 
     it('shows header', () => {
-      expect(spectator.query('mat-card-header h3')).toHaveText('Zvol Space Management');
-      expect(spectator.query('mat-card-header button')).not.toExist();
+      expect(spectator.query(TnCardComponent)!.title()).toBe('Zvol Space Management');
+    });
+
+    it('does not show Edit button for zvol', async () => {
+      const editLoader = TestbedHarnessEnvironment.loader(spectator.fixture);
+      const editButtons = await editLoader.getAllHarnesses(TnButtonHarness.with({ label: 'Edit' }));
+      expect(editButtons).toHaveLength(0);
     });
 
     it('shows SpaceManagementChartComponent', () => {
@@ -201,10 +217,91 @@ describe('DatasetCapacityManagementCardComponent', () => {
   });
 
   it('opens capacity settings form when Edit button is clicked', async () => {
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Edit' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
     await editButton.click();
 
-    expect(spectator.inject(SlideIn).open)
-      .toHaveBeenCalledWith(DatasetCapacitySettingsComponent, { data: datasetFilesystem, wide: true });
+    expect(spectator.inject(FormSidePanelService).open)
+      .toHaveBeenCalledWith(DatasetCapacitySettingsComponent, {
+        title: 'Capacity Settings',
+        wide: true,
+        inputs: { datasetToEdit: datasetFilesystem },
+      });
+  });
+
+  describe('tiering', () => {
+    const createTieredComponent = createComponentFactory({
+      component: DatasetCapacityManagementCardComponent,
+      imports: [
+        FileSizePipe,
+      ],
+      componentProviders: [
+        MockModule(NgxSkeletonLoaderModule),
+      ],
+      declarations: [
+        MockComponents(SpaceManagementChartComponent),
+      ],
+      providers: [
+        mockAuth(),
+        mockApi([
+          mockCall('pool.dataset.get_quota', []),
+          mockCall('zpool.query', [{
+            name: 'dozer',
+            properties: {
+              class_special_available: { value: 1024 * 1024 * 1024 * 5 },
+            },
+          }] as never),
+        ]),
+        mockProvider(DialogService),
+        mockProvider(DatasetTreeStore, {
+          datasetUpdated: jest.fn(),
+          selectedBranch$: of([]),
+        }),
+        mockProvider(FormSidePanelService, { open: jest.fn(() => SlideInResult.empty()) }),
+        mockProvider(SharingTierService, {
+          getTierConfig: () => of({ enabled: true }),
+          tierEnabled: () => true,
+        }),
+      ],
+    });
+
+    it('uses "Available to Dataset (Regular Tier)" label when tiering is enabled', () => {
+      spectator = createTieredComponent({
+        props: {
+          dataset: { ...datasetFilesystem, pool: 'dozer', tier: { tier_type: DatasetTier.Regular } } as DatasetDetails,
+        },
+      });
+      const label = spectator.queryAll('.details .details-item .label')[0];
+      expect(label).toHaveText('Available to Dataset (Regular Tier):');
+    });
+
+    it('shows "Pool Performance Tier Available" when dataset is on the Performance tier', () => {
+      spectator = createTieredComponent({
+        props: {
+          dataset: {
+            ...datasetFilesystem,
+            pool: 'dozer',
+            tier: { tier_type: DatasetTier.Performance },
+          } as DatasetDetails,
+        },
+      });
+      const labels = Array.from(spectator.queryAll('.details .details-item .label'));
+      const perfRow = labels.find((el) => el.textContent?.includes('Pool Performance Tier Available'));
+      expect(perfRow).toBeTruthy();
+      expect(perfRow!.nextElementSibling).toHaveText('5 GiB');
+    });
+
+    it('does not show Pool Performance Tier row when dataset is on the Regular tier', () => {
+      spectator = createTieredComponent({
+        props: {
+          dataset: {
+            ...datasetFilesystem,
+            pool: 'dozer',
+            tier: { tier_type: DatasetTier.Regular },
+          } as DatasetDetails,
+        },
+      });
+      const labels = Array.from(spectator.queryAll('.details .details-item .label'));
+      expect(labels.find((el) => el.textContent?.includes('Pool Performance Tier Available'))).toBeFalsy();
+    });
   });
 });

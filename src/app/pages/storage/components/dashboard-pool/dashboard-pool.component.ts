@@ -2,13 +2,11 @@ import {
   ChangeDetectionStrategy, Component, DestroyRef, input, OnChanges, inject, computed,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatButton, MatIconButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatDialog } from '@angular/material/dialog';
-import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
-import { MatTooltip } from '@angular/material/tooltip';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent } from '@truenas/ui-components';
+import {
+  TnButtonComponent, TnCardComponent, TnDialog, TnIconButtonComponent,
+  TnMenuComponent, TnMenuItemComponent, TnMenuTriggerDirective,
+} from '@truenas/ui-components';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { filter, switchMap, tap } from 'rxjs/operators';
 import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
@@ -26,23 +24,22 @@ import { searchDelayConst } from 'app/modules/global-search/constants/delay.cons
 import { UiSearchDirectivesService } from 'app/modules/global-search/services/ui-search-directives.service';
 import { LoaderService } from 'app/modules/loader/loader.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { TranslatedString } from 'app/modules/translate/translate.helper';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { dashboardPoolElements } from 'app/pages/storage/components/dashboard-pool/dashboard-pool.elements';
+import { DiskHealthCardComponent } from 'app/pages/storage/components/dashboard-pool/disk-health-card/disk-health-card.component';
 import {
   ExportDisconnectModalComponent,
 } from 'app/pages/storage/components/dashboard-pool/export-disconnect-modal/export-disconnect-modal.component';
+import { PoolUsageCardComponent } from 'app/pages/storage/components/dashboard-pool/pool-usage-card/pool-usage-card.component';
+import { SedLockedWarningComponent } from 'app/pages/storage/components/dashboard-pool/sed-locked-warning/sed-locked-warning.component';
 import {
   AutotrimDialog,
 } from 'app/pages/storage/components/dashboard-pool/storage-health-card/autotrim-dialog/autotrim-dialog.component';
+import { StorageHealthCardComponent } from 'app/pages/storage/components/dashboard-pool/storage-health-card/storage-health-card.component';
 import { VDevsCardComponent } from 'app/pages/storage/components/dashboard-pool/vdevs-card/vdevs-card.component';
 import { PoolsDashboardStore } from 'app/pages/storage/stores/pools-dashboard-store.service';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
-import { DiskHealthCardComponent } from './disk-health-card/disk-health-card.component';
-import { PoolUsageCardComponent } from './pool-usage-card/pool-usage-card.component';
-import { SedLockedWarningComponent } from './sed-locked-warning/sed-locked-warning.component';
-import { StorageHealthCardComponent } from './storage-health-card/storage-health-card.component';
 
 @Component({
   selector: 'ix-dashboard-pool',
@@ -51,28 +48,24 @@ import { StorageHealthCardComponent } from './storage-health-card/storage-health
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     RequiresRolesDirective,
-    MatButton,
-    MatIconButton,
-    MatMenu,
-    MatMenuItem,
-    MatMenuTrigger,
-    MatTooltip,
-    TestDirective,
+    TnButtonComponent,
+    TnIconButtonComponent,
+    TnMenuComponent,
+    TnMenuItemComponent,
+    TnMenuTriggerDirective,
     UiSearchDirective,
-    TnIconComponent,
     VDevsCardComponent,
     PoolUsageCardComponent,
     StorageHealthCardComponent,
     DiskHealthCardComponent,
     NgxSkeletonLoaderModule,
-    MatCard,
-    MatCardContent,
+    TnCardComponent,
     TranslateModule,
     SedLockedWarningComponent,
   ],
 })
 export class DashboardPoolComponent implements OnChanges {
-  private matDialog = inject(MatDialog);
+  private tnDialog = inject(TnDialog);
   private dialogService = inject(DialogService);
   private errorHandler = inject(ErrorHandlerService);
   private translate = inject(TranslateService);
@@ -108,12 +101,12 @@ export class DashboardPoolComponent implements OnChanges {
     }
   }
 
-  onDisconnect(): void {
-    this.matDialog
+  protected onDisconnect(): void {
+    this.tnDialog
       .open(ExportDisconnectModalComponent, {
         data: this.pool(),
       })
-      .afterClosed()
+      .closed
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((needRefresh: boolean) => {
         if (!needRefresh) {
@@ -124,7 +117,7 @@ export class DashboardPoolComponent implements OnChanges {
       });
   }
 
-  onExpand(): void {
+  protected onExpand(): void {
     this.dialogService.confirm({
       title: this.translate.instant(helptextVolumes.expandPoolDialog.title),
       message: this.translate.instant(helptextVolumes.expandPoolDialog.message),
@@ -147,7 +140,7 @@ export class DashboardPoolComponent implements OnChanges {
       .subscribe();
   }
 
-  onUpgrade(): void {
+  protected onUpgrade(): void {
     this.dialogService.confirm({
       title: this.translate.instant('Upgrade Pool'),
       message: this.translate.instant(helptextVolumes.upgradePoolDialogWarning) + this.pool().name as TranslatedString,
@@ -167,19 +160,19 @@ export class DashboardPoolComponent implements OnChanges {
     ).subscribe();
   }
 
-  onEditAutotrim(): void {
-    this.matDialog
+  protected onEditAutotrim(): void {
+    this.tnDialog
       .open(AutotrimDialog, { data: this.pool() })
-      .afterClosed()
+      .closed
       .pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.store.loadDashboard());
   }
 
-  onImportSuccess(): void {
+  protected onImportSuccess(): void {
     this.store.loadDashboard();
   }
 
-  counter(i: number): number[] {
+  protected counter(i: number): number[] {
     return new Array<number>(i).fill(0).map((_, index) => index);
   }
 

@@ -1,10 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, input, inject } from '@angular/core';
-import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
-import { MatTooltip } from '@angular/material/tooltip';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { TnIconButtonComponent } from '@truenas/ui-components';
+import {
+  TnIconButtonComponent,
+  TnMenuComponent,
+  TnMenuItemComponent,
+  TnMenuTriggerDirective,
+  TnTooltipDirective,
+} from '@truenas/ui-components';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 
 @Component({
   selector: 'ix-copy-button',
@@ -13,12 +16,11 @@ import { TestDirective } from 'app/modules/test-id/test.directive';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     TnIconButtonComponent,
-    MatTooltip,
+    TnTooltipDirective,
     TranslateModule,
-    MatMenuTrigger,
-    MatMenu,
-    MatMenuItem,
-    TestDirective,
+    TnMenuComponent,
+    TnMenuItemComponent,
+    TnMenuTriggerDirective,
   ],
 })
 export class CopyButtonComponent {
@@ -34,8 +36,14 @@ export class CopyButtonComponent {
     this.snackbar.success(this.translate.instant('Copied to clipboard'));
   }
 
+  // `navigator.clipboard.writeText` rejects when the document isn't focused or the
+  // permission is denied, so the copy can fail with nothing else to report it.
+  private showErrorMessage(): void {
+    this.snackbar.error(this.translate.instant('Failed to copy to clipboard'));
+  }
+
   private copyViaDeprecatedExecCommand(text: string): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const textArea = document.createElement('textarea');
       Object.assign(textArea.style, { position: 'fixed', left: '-9999px', top: '-9999px' });
       textArea.value = text;
@@ -43,9 +51,16 @@ export class CopyButtonComponent {
       textArea.select();
       // Fallback for browsers that don't support navigator.clipboard
       // eslint-disable-next-line sonarjs/deprecation
-      document.execCommand('copy');
+      const isCopied = document.execCommand('copy');
       textArea.remove();
-      resolve();
+
+      // `execCommand` reports a refused copy by returning false rather than throwing, so
+      // without this the fallback path would always claim success.
+      if (isCopied) {
+        resolve();
+      } else {
+        reject(new Error('document.execCommand("copy") was refused'));
+      }
     });
   }
 
@@ -57,11 +72,15 @@ export class CopyButtonComponent {
     return this.copyViaDeprecatedExecCommand(text);
   }
 
-  copyToClipboard(): void {
-    this.handleCopyToClipboard(this.text()).then(() => this.showSuccessMessage());
+  protected copyToClipboard(): void {
+    this.handleCopyToClipboard(this.text())
+      .then(() => this.showSuccessMessage())
+      .catch(() => this.showErrorMessage());
   }
 
-  copyJsonToClipboard(): void {
-    this.handleCopyToClipboard(JSON.stringify(this.jsonText(), null, 2)).then(() => this.showSuccessMessage());
+  protected copyJsonToClipboard(): void {
+    this.handleCopyToClipboard(JSON.stringify(this.jsonText(), null, 2))
+      .then(() => this.showSuccessMessage())
+      .catch(() => this.showErrorMessage());
   }
 }

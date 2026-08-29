@@ -1,26 +1,23 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatMenuHarness } from '@angular/material/menu/testing';
-import { MatSlideToggleHarness } from '@angular/material/slide-toggle/testing';
 import { Spectator, createComponentFactory, mockProvider } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
-import { of } from 'rxjs';
+import {
+  TnButtonHarness, TnCardComponent, TnIconButtonHarness, TnMenuHarness, TnMenuTesting,
+  TnSlideToggleHarness, TnTableHarness,
+} from '@truenas/ui-components';
+import { Subject, of } from 'rxjs';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
+import { DatasetTier } from 'app/enums/dataset-tier.enum';
 import { NfsShare } from 'app/interfaces/nfs-share.interface';
 import { Pool } from 'app/interfaces/pool.interface';
+import { ZfsTierRewriteJobEntry } from 'app/interfaces/zfs-tier.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { EmptyService } from 'app/modules/empty/empty.service';
-import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { IxTableHarness } from 'app/modules/ix-table/components/ix-table/ix-table.harness';
-import {
-  IxTableColumnsSelectorComponent,
-} from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import { FakeProgressBarComponent } from 'app/modules/loader/components/fake-progress-bar/fake-progress-bar.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
+import { mockSharingTierService } from 'app/pages/sharing/components/testing/mock-sharing-tier.utils';
 import { NfsFormComponent } from 'app/pages/sharing/nfs/nfs-form/nfs-form.component';
 import { NfsListComponent } from 'app/pages/sharing/nfs/nfs-list/nfs-list.component';
 import { selectPreferences } from 'app/store/preferences/preferences.selectors';
@@ -37,27 +34,16 @@ const shares: Partial<NfsShare>[] = [
   },
 ];
 
-const slideInRef: SlideInRef<NfsShare | undefined, unknown> = {
-  close: jest.fn(),
-  requireConfirmationWhen: jest.fn(),
-  getData: jest.fn((): undefined => undefined),
-};
-
-const commonImports = [
-  BasicSearchComponent,
-  IxTableColumnsSelectorComponent,
-  FakeProgressBarComponent,
-];
-
+// The add/edit form is opened through FormSidePanelService, which hosts it in
+// its own side-panel container — the list only asserts the open() contract.
 const commonProviders = [
   mockAuth(),
   mockProvider(EmptyService),
-  mockProvider(SlideInRef, slideInRef),
   mockProvider(DialogService, {
     confirm: jest.fn(() => of(true)),
     confirmDelete: jest.fn(() => of(undefined)),
   }),
-  mockProvider(SlideIn, {
+  mockProvider(FormSidePanelService, {
     open: jest.fn(() => SlideInResult.empty()),
   }),
   provideMockStore({
@@ -77,11 +63,10 @@ const commonProviders = [
 describe('NfsListComponent', () => {
   let spectator: Spectator<NfsListComponent>;
   let loader: HarnessLoader;
-  let table: IxTableHarness;
+  let table: TnTableHarness;
 
   const createComponent = createComponentFactory({
     component: NfsListComponent,
-    imports: commonImports,
     providers: [
       ...commonProviders,
       mockApi([
@@ -90,41 +75,63 @@ describe('NfsListComponent', () => {
         mockCall('sharing.nfs.update'),
         mockCall('pool.query', [{ path: '/mnt/pool' }] as Pool[]),
       ]),
+      mockSharingTierService({ enabled: false }),
     ],
   });
+
+  async function openRowMenu(): Promise<TnMenuHarness> {
+    const trigger = await loader.getHarness(TnIconButtonHarness.with({ name: 'dots-vertical' }));
+    await trigger.click();
+    return TnMenuTesting.rootLoader(spectator.fixture).getHarness(TnMenuHarness);
+  }
 
   beforeEach(async () => {
     spectator = createComponent();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    table = await loader.getHarness(IxTableHarness);
+    table = await loader.getHarness(TnTableHarness);
   });
 
-  it('shows acurate page title', () => {
-    const title = spectator.query('h3');
-    expect(title).toHaveText('NFS');
+  it('shows accurate page title', () => {
+    // White-box: no TnCardHarness in @truenas/ui-components yet.
+    expect(spectator.query(TnCardComponent)!.title()).toBe('NFS');
   });
 
-  it('opens exporter form when "Add" button is pressed', async () => {
-    const addButton = await loader.getHarness(MatButtonHarness.with({ text: 'Add' }));
+  it('opens the form in a side panel when "Add" is pressed', async () => {
+    const addButton = await loader.getHarness(TnButtonHarness.with({ label: 'Add' }));
     await addButton.click();
+    spectator.detectChanges();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(NfsFormComponent);
-  });
-
-  it('opens nfs share form when "Edit" button is pressed', async () => {
-    const [menu] = await loader.getAllHarnesses(MatMenuHarness.with({ selector: '[mat-icon-button]' }));
-    await menu.open();
-    await menu.clickItem({ text: 'Edit' });
-
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(NfsFormComponent, {
-      data: { existingNfsShare: shares[0] },
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(NfsFormComponent, {
+      title: 'Add NFS Share',
+      inputs: { nfsShareData: { existingNfsShare: undefined } },
     });
   });
 
-  it('opens delete dialog when "Delete" button is pressed', async () => {
-    const [menu] = await loader.getAllHarnesses(MatMenuHarness.with({ selector: '[mat-icon-button]' }));
-    await menu.open();
-    await menu.clickItem({ text: 'Delete' });
+  it('opens the form with the row data when "Edit" is pressed', async () => {
+    const menu = await openRowMenu();
+    await menu.clickItem({ label: 'Edit' });
+    spectator.detectChanges();
+
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(NfsFormComponent, {
+      title: 'Edit NFS Share',
+      inputs: { nfsShareData: { existingNfsShare: shares[0] } },
+    });
+  });
+
+  it('reloads the list after a successful form submission', async () => {
+    jest.spyOn(spectator.inject(FormSidePanelService), 'open').mockReturnValue(SlideInResult.success(true));
+    const loadSpy = jest.spyOn(spectator.component.dataProvider, 'load');
+
+    const addButton = await loader.getHarness(TnButtonHarness.with({ label: 'Add' }));
+    await addButton.click();
+    spectator.detectChanges();
+
+    expect(loadSpy).toHaveBeenCalled();
+  });
+
+  it('opens delete dialog when "Delete" is pressed', async () => {
+    const menu = await openRowMenu();
+    await menu.clickItem({ label: 'Delete' });
 
     expect(spectator.inject(DialogService).confirmDelete).toHaveBeenCalledWith({
       title: expect.any(String),
@@ -134,19 +141,17 @@ describe('NfsListComponent', () => {
   });
 
   it('should show table rows', async () => {
-    const expectedRows = [
-      ['Path', 'Description', 'Networks', 'Hosts', 'Enabled', 'Expose Snapshots', ''],
+    expect(await table.getHeaderTexts()).toEqual([
+      'Path', 'Description', 'Networks', 'Hosts', 'Enabled', 'Expose Snapshots', '',
+    ]);
+    expect(await table.getAllRowTexts()).toEqual([
       ['some-path', 'comment', 'network1, network2', 'host1, host2', '', 'No', ''],
-    ];
-
-    const cells = await table.getCellTexts();
-    expect(cells).toEqual(expectedRows);
+    ]);
   });
 
   describe('with exported pool shares', () => {
     const createExportedComponent = createComponentFactory({
       component: NfsListComponent,
-      imports: commonImports,
       providers: [
         ...commonProviders,
         mockApi([
@@ -158,17 +163,17 @@ describe('NfsListComponent', () => {
           mockCall('sharing.nfs.update'),
           mockCall('pool.query', [{ path: '/mnt/pool' }] as Pool[]),
         ]),
+        mockSharingTierService({ enabled: false }),
       ],
     });
 
-    beforeEach(async () => {
+    beforeEach(() => {
       spectator = createExportedComponent();
       loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-      table = await loader.getHarness(IxTableHarness);
     });
 
     it('should disable toggle when share is on an exported pool', async () => {
-      const toggle = await table.getHarnessInCell(MatSlideToggleHarness, 1, 4);
+      const toggle = await loader.getHarness(TnSlideToggleHarness.with({ ancestor: 'tn-table' }));
       expect(await toggle.isDisabled()).toBe(true);
     });
   });
@@ -176,7 +181,6 @@ describe('NfsListComponent', () => {
   describe('with locked shares', () => {
     const createLockedComponent = createComponentFactory({
       component: NfsListComponent,
-      imports: commonImports,
       providers: [
         ...commonProviders,
         mockApi([
@@ -189,18 +193,112 @@ describe('NfsListComponent', () => {
           mockCall('sharing.nfs.update'),
           mockCall('pool.query', [{ path: '/mnt/pool' }] as Pool[]),
         ]),
+        mockSharingTierService({ enabled: false }),
+      ],
+    });
+
+    beforeEach(() => {
+      spectator = createLockedComponent();
+      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
+    });
+
+    it('should disable toggle when share is locked', async () => {
+      const toggle = await loader.getHarness(TnSlideToggleHarness.with({ ancestor: 'tn-table' }));
+      expect(await toggle.isDisabled()).toBe(true);
+    });
+  });
+
+  describe('tier refresh integration', () => {
+    const jobUpdates$ = new Subject<ZfsTierRewriteJobEntry>();
+
+    const createTierComponent = createComponentFactory({
+      component: NfsListComponent,
+      providers: [
+        ...commonProviders,
+        mockApi([
+          mockCall('sharing.nfs.query', shares as NfsShare[]),
+          mockCall('sharing.nfs.delete'),
+          mockCall('sharing.nfs.update'),
+          mockCall('pool.query', [{ path: '/mnt/pool' }] as Pool[]),
+        ]),
+        mockSharingTierService({ enabled: true, jobUpdates$ }),
+      ],
+    });
+
+    beforeEach(() => {
+      spectator = createTierComponent();
+      spectator.detectChanges();
+    });
+
+    it('reloads shares when a tier job update is emitted', () => {
+      const loadSpy = jest.spyOn(spectator.component.dataProvider, 'load');
+      jobUpdates$.next({ tier_job_id: 'job-1' } as ZfsTierRewriteJobEntry);
+      expect(loadSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('Change Storage Tier action hidden when tier missing', () => {
+    const createNoTierComponent = createComponentFactory({
+      component: NfsListComponent,
+      providers: [
+        ...commonProviders,
+        mockApi([
+          mockCall('sharing.nfs.query', [{
+            ...shares[0],
+            path: '/mnt/pool/data',
+            tier: null,
+          }] as NfsShare[]),
+          mockCall('sharing.nfs.delete'),
+          mockCall('sharing.nfs.update'),
+          mockCall('pool.query', [{ path: '/mnt/pool' }] as Pool[]),
+        ]),
+        mockSharingTierService({ enabled: true }),
       ],
     });
 
     beforeEach(async () => {
-      spectator = createLockedComponent();
+      spectator = createNoTierComponent();
       loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-      table = await loader.getHarness(IxTableHarness);
+      table = await loader.getHarness(TnTableHarness);
     });
 
-    it('should disable toggle when share is locked', async () => {
-      const toggle = await table.getHarnessInCell(MatSlideToggleHarness, 1, 4);
-      expect(await toggle.isDisabled()).toBe(true);
+    it('does not show Change Storage Tier in the action menu', async () => {
+      const menu = await openRowMenu();
+      const labels = await menu.getItemLabels();
+      expect(labels.some((label) => label.includes('Change Storage Tier'))).toBe(false);
+    });
+  });
+
+  describe('Change Storage Tier action hidden when row is locked', () => {
+    const createLockedTierComponent = createComponentFactory({
+      component: NfsListComponent,
+      providers: [
+        ...commonProviders,
+        mockApi([
+          mockCall('sharing.nfs.query', [{
+            ...shares[0],
+            path: '/mnt/pool/data',
+            locked: true,
+            tier: { tier_type: DatasetTier.Performance, tier_job: null },
+          }] as NfsShare[]),
+          mockCall('sharing.nfs.delete'),
+          mockCall('sharing.nfs.update'),
+          mockCall('pool.query', [{ path: '/mnt/pool' }] as Pool[]),
+        ]),
+        mockSharingTierService({ enabled: true }),
+      ],
+    });
+
+    beforeEach(async () => {
+      spectator = createLockedTierComponent();
+      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
+      table = await loader.getHarness(TnTableHarness);
+    });
+
+    it('does not show Change Storage Tier in the action menu', async () => {
+      const menu = await openRowMenu();
+      const labels = await menu.getItemLabels();
+      expect(labels.some((label) => label.includes('Change Storage Tier'))).toBe(false);
     });
   });
 });

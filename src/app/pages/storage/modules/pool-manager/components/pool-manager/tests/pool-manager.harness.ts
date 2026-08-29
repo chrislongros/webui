@@ -1,26 +1,37 @@
-import { ComponentHarness, ComponentHarnessConstructor, parallel } from '@angular/cdk/testing';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatStepHarness, MatStepperHarness } from '@angular/material/stepper/testing';
 import {
-  fillControlValues,
+  ComponentHarness, HarnessQuery, parallel,
+} from '@angular/cdk/testing';
+import { TnButtonHarness, TnStepperHarness } from '@truenas/ui-components';
+import { IxFormControlHarness } from 'app/modules/forms/ix-forms/interfaces/ix-form-control-harness.interface';
+import {
+  fillControlValues, formControlHarnessTypes,
   getControlValues, getDisabledStates,
-  indexControlsByLabel, IxFormBasicValueType, SupportedFormControlHarness,
-  supportedFormControlSelectors,
+  indexControlsByLabel, IxFormBasicValueType,
 } from 'app/modules/forms/ix-forms/testing/control-harnesses.helpers';
 import { ConfigurationPreviewHarness } from 'app/pages/storage/modules/pool-manager/components/configuration-preview/configuration-preview.harness';
 import { ExistingConfigurationPreviewHarness } from 'app/pages/storage/modules/pool-manager/components/existing-configuration-preview/existing-configuration-preview.harness';
 import { NewDevicesConfigurationPreviewHarness } from 'app/pages/storage/modules/pool-manager/components/new-devices/new-devices-configuration-preview.harness';
 import { ReviewWizardStepHarness } from 'app/pages/storage/modules/pool-manager/components/pool-manager-wizard/steps/9-review-wizard-step/review-wizard-step.harness';
 
+/**
+ * Lightweight stand-in for the old MatStepHarness. tn-stepper renders only the
+ * active step's content, so "the active step" is just the pool-manager host with
+ * a label resolved from the stepper header.
+ */
+export interface ActiveStepHarness {
+  getLabel(): Promise<string>;
+  getHarness<T extends ComponentHarness>(query: HarnessQuery<T>): Promise<T>;
+}
+
 export class PoolManagerHarness extends ComponentHarness {
   static readonly hostSelector = 'ix-pool-manager';
 
-  getStepper = this.locatorFor(MatStepperHarness);
-  getStartOverButton = this.locatorFor(MatButtonHarness.with({ text: 'Start Over' }));
-  getNextButton = this.locatorFor(MatButtonHarness.with({ text: 'Next' }));
-  getBackButton = this.locatorFor(MatButtonHarness.with({ text: 'Back' }));
-  getCreatePoolButton = this.locatorFor(MatButtonHarness.with({ text: 'Create Pool' }));
-  getUpdatePoolButton = this.locatorFor(MatButtonHarness.with({ text: 'Update Pool' }));
+  getStepper = this.locatorFor(TnStepperHarness);
+  getStartOverButton = this.locatorFor(TnButtonHarness.with({ label: 'Start Over' }));
+  getNextButton = this.locatorFor(TnButtonHarness.with({ label: 'Next' }));
+  getBackButton = this.locatorFor(TnButtonHarness.with({ label: 'Back' }));
+  getCreatePoolButton = this.locatorFor(TnButtonHarness.with({ label: 'Create Pool' }));
+  getUpdatePoolButton = this.locatorFor(TnButtonHarness.with({ label: 'Update Pool' }));
 
   getConfigurationPreview = this.locatorFor(ConfigurationPreviewHarness);
   getExistingConfigurationPreview = this.locatorFor(ExistingConfigurationPreviewHarness);
@@ -28,24 +39,35 @@ export class PoolManagerHarness extends ComponentHarness {
 
   getReviewWizardStep = this.locatorFor(ReviewWizardStepHarness);
 
-  async getActiveStep(): Promise<MatStepHarness> {
+  async getActiveStep(): Promise<ActiveStepHarness> {
     const stepper = await this.getStepper();
-    const steps = await stepper.getSteps({ selected: true });
-    return steps[0];
+    const index = await stepper.getSelectedIndex();
+    const labels = await stepper.getStepLabels();
+    return {
+      getLabel: () => Promise.resolve(labels[index]),
+      getHarness: <T extends ComponentHarness>(query: HarnessQuery<T>) => this.locatorFor(query)(),
+    };
+  }
+
+  async goToStep(label: string): Promise<void> {
+    const stepper = await this.getStepper();
+    const labels = await stepper.getStepLabels();
+    await stepper.selectStep(labels.indexOf(label));
   }
 
   // TODO: This is similar to ix-form.harness.ts and ix-fieldset-harness.
   // TODO: Find a way to apply IxFormHarness to portions of components.
-  async getControlHarnessesInStep(): Promise<Record<string, SupportedFormControlHarness>> {
-    const activeStep = await this.getActiveStep();
+  async getControlHarnessesInStep(): Promise<Record<string, IxFormControlHarness>> {
+    // Only the active step's content is rendered, so querying the host is
+    // equivalent to scoping to the active step. Controls migrated to tn-* are
+    // wrapped in `tn-form-field` and driven through TnFormControlHarness so a
+    // step mixing ix-* and tn-* controls can still be filled/read by label.
     const controlsByTypes = await parallel(() => {
-      return supportedFormControlSelectors.map((selector) => {
-        return activeStep.getAllHarnesses(selector as ComponentHarnessConstructor<ComponentHarness>);
-      });
+      return formControlHarnessTypes.map((harnessType) => this.locatorForAll(harnessType)());
     });
 
     const controls = controlsByTypes.flatMap((controlsInType) => controlsInType.flat());
-    return indexControlsByLabel(controls as SupportedFormControlHarness[]);
+    return indexControlsByLabel(controls);
   }
 
   async getConfigurationPreviewSummary(): Promise<Record<string, string>> {
@@ -85,7 +107,7 @@ export class PoolManagerHarness extends ComponentHarness {
     return fillControlValues(controls, values);
   }
 
-  async getControl(label: string): Promise<SupportedFormControlHarness> {
+  async getControl(label: string): Promise<IxFormControlHarness> {
     const controlsDict = await this.getControlHarnessesInStep();
     return controlsDict[label];
   }

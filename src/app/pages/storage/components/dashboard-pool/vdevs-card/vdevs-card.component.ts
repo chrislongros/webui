@@ -1,12 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, input, OnChanges, OnInit, inject } from '@angular/core';
-import { MatButton } from '@angular/material/button';
 import {
-  MatCard, MatCardHeader, MatCardTitle, MatCardContent,
-} from '@angular/material/card';
-import { MatTooltip } from '@angular/material/tooltip';
+  ChangeDetectionStrategy, Component, computed, input, OnChanges, OnInit, inject,
+} from '@angular/core';
 import { Router } from '@angular/router';
+import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent, TnTooltipDirective } from '@truenas/ui-components';
+import {
+  TnButtonComponent, TnCardComponent, TnCardFooterActionsDirective, TnCardHeaderDirective,
+  TnIconComponent, TnTooltipDirective,
+} from '@truenas/ui-components';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
 import { PoolCardIconType } from 'app/enums/pool-card-icon-type.enum';
 import { PoolStatus } from 'app/enums/pool-status.enum';
@@ -19,14 +20,37 @@ import {
   TopologyDisk,
   VDevItem,
 } from 'app/interfaces/storage.interface';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { SharingTierService } from 'app/pages/sharing/components/sharing-tier.service';
 import { PoolCardIconComponent } from 'app/pages/storage/components/dashboard-pool/pool-card-icon/pool-card-icon.component';
 import { vDevsCardElements } from 'app/pages/storage/components/dashboard-pool/vdevs-card/vdevs-card.elements';
 import { StorageService } from 'app/services/storage.service';
 
+/**
+ * Per-VDEV-type display state. `assigned` is the source of truth for whether a
+ * row should render; `text` is the user-visible string. Keeping these as
+ * separate fields avoids the locale-dependent "is this string the same as the
+ * 'not assigned' marker" comparison that used to drive template visibility.
+ */
+interface VdevTypeState {
+  assigned: boolean;
+  text: string;
+}
+
 interface TopologyState {
+  data: VdevTypeState;
+  special: VdevTypeState;
+  log: VdevTypeState;
+  cache: VdevTypeState;
+  spare: VdevTypeState;
+  dedup: VdevTypeState;
+}
+
+/**
+ * Warnings keyed identically to TopologyState. Empty string means no warning.
+ */
+interface TopologyWarningState {
   data: string;
-  metadata: string;
+  special: string;
   log: string;
   cache: string;
   spare: string;
@@ -43,42 +67,71 @@ export type EmptyDiskObject = Record<
   styleUrls: ['./vdevs-card.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
+    TnCardComponent,
+    TnCardHeaderDirective,
+    TnCardFooterActionsDirective,
     UiSearchDirective,
-    MatCardHeader,
-    MatCardTitle,
     PoolCardIconComponent,
-    MatButton,
-    TestDirective,
-    MatCardContent,
-    MatTooltip,
+    TnButtonComponent,
     TnIconComponent,
     TnTooltipDirective,
     TranslateModule,
   ],
 })
 export class VDevsCardComponent implements OnInit, OnChanges {
-  router = inject(Router);
-  translate = inject(TranslateService);
-  storageService = inject(StorageService);
+  protected router = inject(Router);
+  private translate = inject(TranslateService);
+  private storageService = inject(StorageService);
+  private tierService = inject(SharingTierService);
 
   readonly poolState = input.required<Pool>();
   readonly disks = input<StorageDashboardDisk[]>([]);
 
+  protected readonly tierEnabled = this.tierService.tierEnabled;
+
+  protected showTierLabels = computed(() => {
+    return this.tierEnabled() && this.poolState().topology?.special?.length > 0;
+  });
+
   protected readonly searchableElements = vDevsCardElements;
   protected readonly vdevsHelpTooltip = this.translate.instant('A pool is made of VDEVs (virtual devices). Each VDEV is a group of drives working together');
-  notAssignedDev = this.translate.instant('VDEVs not assigned');
+  private readonly notAssignedDev = this.translate.instant('VDEVs not assigned');
+  private readonly emptyVdevState: VdevTypeState = { assigned: false, text: this.notAssignedDev };
 
   topologyState: TopologyState = {
-    data: this.notAssignedDev,
-    metadata: this.notAssignedDev,
-    log: this.notAssignedDev,
-    cache: this.notAssignedDev,
-    spare: this.notAssignedDev,
-    dedup: this.notAssignedDev,
+    data: this.emptyVdevState,
+    special: this.emptyVdevState,
+    log: this.emptyVdevState,
+    cache: this.emptyVdevState,
+    spare: this.emptyVdevState,
+    dedup: this.emptyVdevState,
   };
 
-  topologyWarningsState: TopologyState = { ...this.topologyState };
+  topologyWarningsState: TopologyWarningState = {
+    data: '',
+    special: '',
+    log: '',
+    cache: '',
+    spare: '',
+    dedup: '',
+  };
+
+  /**
+   * Layout for the non-data VDEV rows. `data` is rendered separately because
+   * it has a unique "Offline VDEVs" branch driven by isPoolOffline().
+   */
+  protected readonly otherVdevRows: {
+    key: 'special' | 'log' | 'cache' | 'spare' | 'dedup';
+    titleKey: string;
+    tierLabelKey?: string;
+    hidden?: () => boolean;
+  }[] = [
+    { key: 'special', titleKey: T('Special VDEVs'), tierLabelKey: T('Performance Tier') },
+    { key: 'log', titleKey: T('Log VDEVs') },
+    { key: 'cache', titleKey: T('Cache VDEVs') },
+    { key: 'spare', titleKey: T('Spare VDEVs'), hidden: () => this.isDraidLayoutDataVdevs },
+    { key: 'dedup', titleKey: T('Dedup VDEVs') },
+  ];
 
   protected iconType = computed(() => {
     if (this.isStatusError(this.poolState())) {
@@ -102,20 +155,18 @@ export class VDevsCardComponent implements OnInit, OnChanges {
 
   readonly noOtherVdevTypes = computed(() => {
     const nonDataVdevs = [
-      this.topologyState.metadata,
+      this.topologyState.special,
       this.topologyState.log,
       this.topologyState.cache,
       this.topologyState.spare,
       this.topologyState.dedup,
     ];
 
-    const emptyCount = nonDataVdevs.filter((vdevType) => vdevType === this.notAssignedDev).length;
-
-    return emptyCount >= 3;
+    return nonDataVdevs.every((vdevType) => !vdevType.assigned);
   });
 
   get isDraidLayoutDataVdevs(): boolean {
-    return /\bDRAID\b/.test(this.topologyState.data);
+    return /\bDRAID\b/.test(this.topologyState.data.text);
   }
 
   ngOnChanges(): void {
@@ -135,23 +186,27 @@ export class VDevsCardComponent implements OnInit, OnChanges {
     this.topologyWarningsState.log = this.parseDevsWarnings(topology.log, VDevType.Log);
     this.topologyWarningsState.cache = this.parseDevsWarnings(topology.cache, VDevType.Cache);
     this.topologyWarningsState.spare = this.parseDevsWarnings(topology.spare, VDevType.Spare);
-    this.topologyWarningsState.metadata = this.parseDevsWarnings(topology.special, VDevType.Special);
+    this.topologyWarningsState.special = this.parseDevsWarnings(topology.special, VDevType.Special);
     this.topologyWarningsState.dedup = this.parseDevsWarnings(topology.dedup, VDevType.Dedup);
 
     this.topologyState.data = this.parseDevs(topology.data, VDevType.Data, this.topologyWarningsState.data);
     this.topologyState.log = this.parseDevs(topology.log, VDevType.Log, this.topologyWarningsState.log);
     this.topologyState.cache = this.parseDevs(topology.cache, VDevType.Cache, this.topologyWarningsState.cache);
     this.topologyState.spare = this.parseDevs(topology.spare, VDevType.Spare, this.topologyWarningsState.spare);
-    this.topologyState.metadata = this.parseDevs(
+    this.topologyState.special = this.parseDevs(
       topology.special,
       VDevType.Special,
-      this.topologyWarningsState.metadata,
+      this.topologyWarningsState.special,
     );
     this.topologyState.dedup = this.parseDevs(topology.dedup, VDevType.Dedup, this.topologyWarningsState.dedup);
   }
 
-  private parseDevs(vdevs: VDevItem[], category: VDevType, warning?: string): string {
-    let outputString = vdevs.length ? '' : this.notAssignedDev as string;
+  private parseDevs(vdevs: VDevItem[], category: VDevType, warning?: string): VdevTypeState {
+    if (!vdevs.length) {
+      return this.emptyVdevState;
+    }
+
+    let outputString = '';
 
     // Check VDEV Widths
     let vdevWidth = 0;
@@ -165,12 +220,8 @@ export class VDevsCardComponent implements OnInit, OnChanges {
       vdevWidth = Array.from(allVdevWidths.values())[0];
     }
 
-    if (outputString && outputString === this.notAssignedDev) {
-      return outputString;
-    }
-
     const type = vdevs[0]?.type;
-    const size = vdevs[0]?.children.length
+    const size = vdevs[0]?.children?.length
       ? this.disks()?.find((disk) => disk.name === vdevs[0]?.children[0]?.disk)?.size
       : this.disks()?.find((disk) => disk.name === (vdevs[0] as TopologyDisk)?.disk)?.size;
 
@@ -190,7 +241,7 @@ export class VDevsCardComponent implements OnInit, OnChanges {
       outputString += '?';
     }
 
-    return outputString;
+    return { assigned: true, text: outputString };
   }
 
   private parseDevsWarnings(vdevs: VDevItem[], category: VDevType): string {

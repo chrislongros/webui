@@ -1,67 +1,53 @@
-<ix-modal-header
+<ix-form
+  [formGroup]="form"
   [requiredRoles]="requiredRoles"
-  [title]="'iSCSI Global Configuration' | translate"
-  [loading]="isLoading()"
-></ix-modal-header>
+  [submitHandler]="handleSubmit"
+  (closed)="closed.emit($event)"
+>
+  <tn-form-section>
+    <tn-form-field
+      [label]="'Base Name' | translate"
+      [tooltip]="tooltips.basename | translate"
+      [required]="true"
+    >
+      <tn-input formControlName="basename"></tn-input>
+    </tn-form-field>
 
-<mat-card>
-  <mat-card-content>
-    <form class="ix-form-container" [formGroup]="form" (submit)="onSubmit()">
-      <ix-fieldset>
-        <ix-input
-          formControlName="basename"
-          [label]="'Base Name' | translate"
-          [required]="true"
-          [tooltip]="tooltips.basename | translate"
-        ></ix-input>
+    <tn-form-field
+      [label]="'ISNS Servers' | translate"
+      [tooltip]="tooltips.isns_servers | translate"
+    >
+      <tn-chip-input testId="isns-servers" formControlName="isns_servers" [allowCustomValue]="true"></tn-chip-input>
+    </tn-form-field>
 
-        <ix-chips
-          formControlName="isns_servers"
-          [label]="'ISNS Servers' | translate"
-          [tooltip]="tooltips.isns_servers | translate"
-        ></ix-chips>
+    <tn-form-field
+      [label]="'Pool Available Space Threshold (%)' | translate"
+      [tooltip]="tooltips.pool_avail_threshold | translate"
+    >
+      <tn-input formControlName="pool_avail_threshold" [inputType]="InputType.Number"></tn-input>
+    </tn-form-field>
 
-        <ix-input
-          formControlName="pool_avail_threshold"
-          type="number"
-          [label]="'Pool Available Space Threshold (%)' | translate"
-          [tooltip]="tooltips.pool_avail_threshold | translate"
-        ></ix-input>
+    <tn-form-field
+      [label]="'iSCSI listen port' | translate"
+      [required]="true"
+    >
+      <tn-input formControlName="listen_port" [inputType]="InputType.Number"></tn-input>
+    </tn-form-field>
 
-        <ix-input
-          type="number"
-          formControlName="listen_port"
-          [label]="'iSCSI listen port' | translate"
-          [required]="true"
-        ></ix-input>
+    @if (isHaSystem()) {
+      <tn-form-field [tooltip]="tooltips.alua | translate">
+        <tn-checkbox
+          formControlName="alua"
+          [label]="'Asymmetric Logical Unit Access (ALUA)' | translate"
+        ></tn-checkbox>
+      </tn-form-field>
+    }
 
-        @if (isHaSystem) {
-          <ix-checkbox
-            formControlName="alua"
-            [label]="'Asymmetric Logical Unit Access (ALUA)' | translate"
-            [tooltip]="tooltips.alua | translate"
-          ></ix-checkbox>
-        }
-
-        <ix-checkbox
-          formControlName="iser"
-          [label]="'Enable iSCSI Extensions for RDMA (iSER)' | translate"
-          [tooltip]="tooltips.iser | translate"
-        ></ix-checkbox>
-      </ix-fieldset>
-
-      <ix-form-actions class="form-actions">
-        <button
-          *ixRequiresRoles="requiredRoles"
-          mat-button
-          type="submit"
-          color="primary"
-          ixTest="save"
-          [disabled]="form.invalid || isLoading()"
-        >
-          {{ 'Save' | translate }}
-        </button>
-      </ix-form-actions>
-    </form>
-  </mat-card-content>
-</mat-card>
+    <tn-form-field [tooltip]="tooltips.iser | translate">
+      <tn-checkbox
+        formControlName="iser"
+        [label]="'Enable iSCSI Extensions for RDMA (iSER)' | translate"
+      ></tn-checkbox>
+    </tn-form-field>
+  </tn-form-section>
+</ix-form>

@@ -303,6 +303,140 @@ See the full list in: `node_modules/@truenas/ui-components/assets/tn-icons/sprit
 - **Type-safe**: Full TypeScript support with proper types
 - **Accessible**: Built with WCAG accessibility standards in mind
 
+## Known Library Gaps
+
+Migration work under epic NAS-141021 turned up several places where
+`@truenas/ui-components` had to be worked around.
+
+### Fixed upstream
+
+The four gaps below were fixed in the library and **require
+`@truenas/ui-components` >= 0.4.7** (the app pins `~0.4.11`). This app now uses the
+library APIs directly and carries no `::ng-deep` workaround for them.
+
+| # | Library gap | Fix | Now used by |
+|---|---|---|---|
+| 1 | `tn-list-item`'s `[tnListIcon]` / `[tnListAvatar]` / `[tnListItemLine]` / `[tnListItemTrailing]` slots never rendered: the flags gating them were set from a `querySelector` in `ngAfterContentInit`, which cannot see content whose slot has not rendered yet. | Signal `contentChildren` queries | `dual-listbox`, `ordered-list`, `network-configuration-card` |
+| 2 | No dense / wrapping `tn-list-item` variant — fixed at 48px rows and single-line ellipsis. | `[dense]` and `[wrap]` inputs | `network-configuration-card` (`[dense]`), `dual-listbox` and `widget-sys-info-active` (`[wrap]`) |
+| 3 | No full-width `tn-button`. | `[fullWidth]` input | `ix-oauth-button`, which re-exposes its own `fullWidth` |
+| 4 | No full-width `tn-slide-toggle` — `inline-flex`, so it shrink-wraps its label and track. | `[fullWidth]` input | `ordered-list` |
+
+### Still outstanding
+
+| # | Library gap | Current workaround |
+|---|---|---|
+| 5a | No control over `tn-list-item`'s leading-slot gap. Three consumers reset the library's standard 16px `margin-right` to a different value (`dual-listbox` 5px, `ordered-list` 2px, `network-configuration-card` 0). A `[leadingGap]` input — or having `[dense]` tighten the leading slot too — would remove all three. | `tn-list-item-leading-gap($gap)` |
+| 5b | No control over `tn-list-item`'s row metrics beyond `[dense]`. `dual-listbox` needs a 23px row with 12px/16px padding, `inspect-vdevs-dialog` an asymmetric 11px/21px/13px one; neither is expressible, and the host is forced to `padding: 0` by the library, so the padding can only be set on the internal content wrapper. | `tn-list-item-content` |
+| 5c | No control over the primary-text span. `dual-listbox` recolours it to `--fg2`; `widget-sys-info` has to make it a flex row to seat a copy button beside the version text (a trailing-slot / rich-label API would cover the latter). | `tn-list-item-primary-text` |
+| 6 | No flat / embedded `tn-list` variant. `tn-list` ships a standalone card look (own background, rounded corners, vertical padding), so a list rendered inside an already-bordered container has to flatten it back out. | `ordered-list.component.scss` resets `background` / `border-radius` / `padding` on `tn-list` |
+| 7 | `TnMenuHarness` exposes no per-item harness, and so no `getTestId()`. | Menu-item test ids are left unasserted — reaching into the overlay for `.tn-menu-item[data-test]` couples a spec to library-internal markup |
+| 8 | No `TnListHarness` / `TnListItemHarness` at all as of 0.4.7, so a spec cannot assert a `tn-list-item` slot rendered without selecting on the library's internal classes. | `dual-listbox.component.spec.ts` queries `.tn-list-item__leading` |
+
+Gaps 5 and 6 are the same signal that produced gaps 1–4: without them, every new
+`tn-list-item` consumer adds another `::ng-deep` override.
+
+Because `.tn-list-item__*` is internal markup rather than public API, the three
+workarounds under gap 5 live in `src/assets/styles/mixins/tn-list.scss` (alongside the
+existing `mixins/tn-card.scss`) rather than being spelled out
+per consumer. A library class rename is then a one-file fix, and each gap disappears
+with a single edit once the corresponding input ships.
+
+That only holds while the mixins are the *only* place the classes are named, so both
+linters enforce it rather than leaving it to review:
+
+- `.stylelintrc.json`'s `selector-disallowed-list` bans `.tn-list-item__` selectors in
+  every `.scss` file. `mixins/tn-list.scss` carries a `stylelint-disable-next-line` on
+  each of its three rules — a per-selector exemption rather than an `overrides` entry,
+  because an override would replace the whole disallowed list and a selector banned
+  globally later would silently stop being banned inside the mixins.
+- `eslint.config.mjs` adds a `no-restricted-syntax` entry matching the string in
+  TypeScript, so a spec query or class-name literal can't route around stylelint. Gap 8's
+  query in `dual-listbox.component.spec.ts` is the single `eslint-disable-next-line`, and
+  goes away with the gap.
+
+A new consumer reaching for `::ng-deep` therefore gets a lint error pointing at the
+mixins, and should either use one or, if none fits, add one.
+
+### Local library builds
+
+Unrelated to the gaps above, but useful whenever a library fix has to be tried before
+it is published. To run this app against an unreleased library build:
+
+```bash
+cd ../truenas-ui-components && yarn build
+cd ../webui
+rm -rf node_modules/@truenas/ui-components
+cp -R ../truenas-ui-components/dist/truenas-ui node_modules/@truenas/ui-components
+```
+
+Use a real copy, not a symlink: Jest resolves a symlink to a path outside
+`node_modules`, so `transformIgnorePatterns` never applies, the Angular linker never
+runs over the partial-Ivy FESM, and every `TestBed` fails with "class doesn't have
+@Component decorator". Re-run the copy after any library rebuild — and after any
+`yarn install`, which restores the published package.
+
+## Migration follow-ups
+
+Further gaps found while migrating pages to `tn-*` (Epic NAS-141021) — the same class
+of thing as "Still outstanding" above — that are deliberately carried rather than fixed
+in the migrating PR. Library items belong in
+[webui-components](https://github.com/truenas/webui-components); webui items belong on
+the epic's follow-up list.
+
+| Gap | Where it shows up | Owner |
+| --- | --- | --- |
+| No multi-colour status pill primitive | `status-pill` mixin in `src/assets/styles/scss-imports/status-pill.scss`, used by `ix-task-state-cell` and `ix-vmware-status-cell` | library |
+| `tn-empty`'s `[title]`/`[description]` are text-only, so an `EmptyConfig.message` written as HTML has to be flattened at runtime | `FlattenEmptyMessagePipe` | library |
+| `tn-empty` caps `[description]` at a readable measure but not `[title]`, so a paragraph-length message stretches the full page width | `tn-empty` rule in `src/assets/styles/components/_tn-empty.scss` | library |
+| Replication "Enabled" is read-only Yes/No in the detail row when the picker hides the column (it was an interactive toggle before); a dead toggle would be worse, so the toggle stays in the visible column only | `replication-list.component.ts` | webui |
+
+### Adopted from the library
+
+Implemented in `@truenas/ui-components` and used here directly, so these need at least
+the since-superseded `~0.4.9` pin (they landed after `0.3.26`, the version this work
+started against). The pin has moved on to `~0.5.1`, which adds `TnCardAction.tooltip`
+(shown while a card action is disabled) and nullish-tolerant `[tnTooltip]` bindings —
+and carries tn-table 0.5.0's breaking change: clearing a sort now emits
+`{ column: '', direction: '' }` instead of naming the column that was cleared, so an
+always-sorted list must fall back to its own sort state (`container-list.component.ts`
+reads its store's active column for this; no other sort consumer was affected).
+
+| Library addition | What it replaced here |
+| --- | --- |
+| `tn-table` wraps cells by default (no input) | The `tn-table-fixed-wrap` mixin include on all seven Data Protection lists, and its `::ng-deep` into `.tn-table__cell-content`. Equal-width columns are a separate opt-in, `[fixedLayout]`, which none of these lists needs |
+| `tn-table [expandOnRowClick]` | `ExpandOnRowClickDirective` (deleted, with its spec) and its four usages |
+| `tn-table [minColumnWidth]` (opt-in; empty by default, so `[fixedLayout]` alone applies no floor) | Nothing — new. Only applies with `[fixedLayout]`, where it derives a width floor as `minColumnWidth × columnCount` so a narrow viewport scrolls rather than shrinking columns to nothing. Reach for it only where the table can actually get that narrow — `installed-apps-list` sets it in the single-column layout and clears it in the split one |
+| `tn-table [minWidth]` | The `card-table-scroll` mixin in `pages/data-protection/_card-title.scss` and its `::ng-deep` into `.tn-table__table`. Now bound as `[minWidth]="'420px'"` on the five Data Protection task cards, so a narrow card scrolls horizontally instead of clipping its fixed-width state/enabled/actions columns |
+
+Also fixed in the library and adopted since, under NAS-142058, because their consumers sat in
+other feature areas: `[singleExpand]` and `[(sortColumn)]`/`[(sortDirection)]` (which between them
+deleted `restrictToSingleExpandedRow`, `reflectSortIntoTable` and the `tn-table/temp-workarounds`
+module they lived in) and `[emptyDescription]`, which restores the second empty-state line —
+`dataProviderEmptyState` now exposes it as `description`, so every `tnTableListHost` list binds it.
+Still unadopted: `TnMenuTriggerDirective`'s `aria-haspopup`/`aria-expanded` + public `isOpen`, and
+`tn-side-panel [closeButtonAriaLabel]`.
+
+Two long-standing library bugs surfaced while doing this, both the same root cause — a rule
+written as a plain `.tn-table` class selector, which emulated encapsulation compiles to
+`[_ngcontent-…]` while the host carries `[_nghost-…]`, so it never matches:
+`overflow-x: auto` (horizontal scrolling had never worked on any `tn-table`) and the first
+version of `wrapCells`. Both are now `:host`-scoped, with a test guarding the convention.
+
+### Shared pieces for a migrated list page
+
+Built while migrating the Data Protection lists; reach for these rather than
+re-deriving them per page.
+
+| Piece | What it replaces |
+| --- | --- |
+| `tnTableListHost(provider, config)` (`tn-table/utils.ts`) | The `rows`/`isLoading`/`empty`/`displayedColumns`/`hiddenColumns`/`onSortChange`/`columnsChange` block every list otherwise copies, plus `perRow`/`rowTag` memoization keyed to the loaded rows |
+| `ExpandOnRowClickDirective` (`ixExpandOnRowClick`) | A `viewChild(TnTableComponent)` and a `(rowClick)` handler calling `toggleRowExpansion` |
+| `<ix-table-text-cell>` (`tn-table-cells/text-cell`) | The `<span tnTestIdType="text" [tnTestId]="[…]">` markup for text, yes/no and schedule cells |
+| `translated(derive)` (`helpers/translated.helper.ts`) | A `computed` calling `TranslateService.instant()`, which would otherwise freeze on the first locale |
+| Global `.sr-only` class (`assets/styles/components/_sr-only.scss`, from the `sr-only` mixin) | A hand-rolled visually-hidden block, or the mixin re-declared per component |
+| `translated(() => ({ … }))` column titles | A title literal repeated in the column model, the `tnHeaderCellDef` and the cell's `[title]` (which feeds its test id) |
+| `{ name, sortBy }` entries in `displayedColumns` | Losing sorting on a column whose `[tnColumnDef]` name matches no row property |
+
 ## Additional Resources
 
 - [npm package](https://www.npmjs.com/package/@truenas/ui-components)

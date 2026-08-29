@@ -1,36 +1,36 @@
+import { CdkTreeModule } from '@angular/cdk/tree';
 import { AsyncPipe } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, input, output, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { MatIconButton } from '@angular/material/button';
 import {
   ActivatedRoute, Router, RouterLink, RouterLinkActive,
 } from '@angular/router';
 import { TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent } from '@truenas/ui-components';
+import {
+  TnIconButtonComponent,
+  TnIconComponent,
+  TnNestedTreeDataSource,
+  TnNestedTreeNodeComponent,
+  TnTreeComponent,
+  TnTreeExpansion,
+  TnTreeNodeOutletDirective,
+  createNestedTreeControl,
+} from '@truenas/ui-components';
 import { filter, map } from 'rxjs/operators';
+import { flattenTreeWithFilter } from 'app/helpers/flatten-tree-with-filter.utils';
 import { VDevNestedDataNode, isVdevGroup } from 'app/interfaces/device-nested-data-node.interface';
 import {
   isTopologyDisk, isVdev, TopologyDisk,
 } from 'app/interfaces/storage.interface';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { NestedTreeNodeComponent } from 'app/modules/ix-tree/components/nested-tree-node/nested-tree-node.component';
-import { TreeNodeComponent } from 'app/modules/ix-tree/components/tree-node/tree-node.component';
-import { TreeViewComponent } from 'app/modules/ix-tree/components/tree-view/tree-view.component';
-import { TreeNodeDefDirective } from 'app/modules/ix-tree/directives/tree-node-def.directive';
-import { TreeNodeOutletDirective } from 'app/modules/ix-tree/directives/tree-node-outlet.directive';
-import { TreeNodeToggleDirective } from 'app/modules/ix-tree/directives/tree-node-toggle.directive';
-import { NestedTreeDataSource } from 'app/modules/ix-tree/nested-tree-datasource';
-import { createNestedTreeControl } from 'app/modules/ix-tree/tree-control.factory';
-import { TreeExpansion } from 'app/modules/ix-tree/tree-expansion.interface';
-import { flattenTreeWithFilter } from 'app/modules/ix-tree/utils/flattern-tree-with-filter';
 import { LayoutService } from 'app/modules/layout/layout.service';
 import { FakeProgressBarComponent } from 'app/modules/loader/components/fake-progress-bar/fake-progress-bar.component';
 import { CastPipe } from 'app/modules/pipes/cast/cast.pipe';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { TopologyItemNodeComponent } from 'app/pages/storage/modules/vdevs/components/topology-item-node/topology-item-node.component';
 import { VDevGroupNodeComponent } from 'app/pages/storage/modules/vdevs/components/vdev-group-node/vdev-group-node.component';
 import { VDevsStore } from 'app/pages/storage/modules/vdevs/stores/vdevs-store.service';
+import { collectDescendantWarning } from 'app/pages/storage/modules/vdevs/utils/descendant-warning';
 
 @Component({
   selector: 'ix-vdevs-list',
@@ -38,7 +38,6 @@ import { VDevsStore } from 'app/pages/storage/modules/vdevs/stores/vdevs-store.s
   styleUrls: ['./vdevs-list.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    TestDirective,
     RouterLink,
     BasicSearchComponent,
     FakeProgressBarComponent,
@@ -46,17 +45,15 @@ import { VDevsStore } from 'app/pages/storage/modules/vdevs/stores/vdevs-store.s
     RouterLinkActive,
     TopologyItemNodeComponent,
     TnIconComponent,
+    TnIconButtonComponent,
     VDevGroupNodeComponent,
-    MatIconButton,
     TranslateModule,
     AsyncPipe,
-    TreeViewComponent,
-    TreeNodeComponent,
-    NestedTreeNodeComponent,
     CastPipe,
-    TreeNodeDefDirective,
-    TreeNodeToggleDirective,
-    TreeNodeOutletDirective,
+    CdkTreeModule,
+    TnTreeComponent,
+    TnNestedTreeNodeComponent,
+    TnTreeNodeOutletDirective,
   ],
 })
 export class VDevsListComponent implements OnInit {
@@ -71,13 +68,17 @@ export class VDevsListComponent implements OnInit {
   showMobileDetails = output<boolean>();
   showDetails = output<{ poolId: number; guid: string }>();
 
+  // GUIDs we've already auto-expanded because of a descendant warning. Tracked so a user
+  // collapse sticks across `nodes$` refreshes — we only auto-expand a given node once.
+  private readonly autoExpandedGuids = new Set<string>();
+
   searchQuery = signal('');
   protected isLoading$ = this.vDevsStore.isLoading$;
   protected selectedNode$ = this.vDevsStore.selectedNode$;
 
-  protected dataSource: NestedTreeDataSource<VDevNestedDataNode>;
+  protected dataSource: TnNestedTreeDataSource<VDevNestedDataNode>;
 
-  protected treeControl: TreeExpansion<VDevNestedDataNode, string> = createNestedTreeControl<
+  protected treeControl: TnTreeExpansion<VDevNestedDataNode, string> = createNestedTreeControl<
     VDevNestedDataNode,
     string
   >(
@@ -118,6 +119,7 @@ export class VDevsListComponent implements OnInit {
           this.createDataSource(nodes);
           this.treeControl.dataNodes = nodes;
           this.openGroupNodes();
+          this.expandNodesWithDescendantWarning(nodes);
           this.cdr.markForCheck();
 
           if (!nodes.length) {
@@ -139,7 +141,7 @@ export class VDevsListComponent implements OnInit {
   }
 
   private createDataSource(dataNodes: VDevNestedDataNode[]): void {
-    this.dataSource = new NestedTreeDataSource();
+    this.dataSource = new TnNestedTreeDataSource();
     this.dataSource.filterPredicate = (nodesToFilter, query = '') => {
       return flattenTreeWithFilter(nodesToFilter, (dataNode) => {
         if (isVdevGroup(dataNode)) {
@@ -178,6 +180,25 @@ export class VDevsListComponent implements OnInit {
     this.treeControl?.dataNodes?.forEach((node) => this.treeControl.expand(node));
   }
 
+  // Expand any VDEV whose subtree contains a non-optimal disk so a failing child isn't hidden
+  // behind a collapsed parent row. Each GUID is only auto-expanded once (see autoExpandedGuids)
+  // so a subsequent user collapse isn't undone when the store re-emits.
+  private expandNodesWithDescendantWarning(nodes: VDevNestedDataNode[]): void {
+    for (const node of nodes) {
+      if (isVdevGroup(node)) {
+        this.expandNodesWithDescendantWarning(node.children);
+        continue;
+      }
+      if (!this.autoExpandedGuids.has(node.guid) && collectDescendantWarning(node).count > 0) {
+        this.treeControl.expand(node);
+        this.autoExpandedGuids.add(node.guid);
+      }
+      if (node.children?.length) {
+        this.expandNodesWithDescendantWarning(node.children);
+      }
+    }
+  }
+
   private listenForRouteChanges(): void {
     this.route.params.pipe(
       map((params) => params.guid as string),
@@ -187,6 +208,18 @@ export class VDevsListComponent implements OnInit {
       this.vDevsStore.selectNodeByGuid(guid);
       this.cdr.markForCheck();
     });
+  }
+
+  /**
+   * Row-level Enter handler. The built-in toggle button does not stop Enter
+   * propagation (the legacy custom toggle did), so only navigate when the
+   * event originated on the row itself — not on the toggle inside it.
+   */
+  protected onRowEnter(event: Event, guid: string): void {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    this.viewDetails(this.poolId(), guid);
   }
 
   protected viewDetails(poolId: number, guid: string): void {

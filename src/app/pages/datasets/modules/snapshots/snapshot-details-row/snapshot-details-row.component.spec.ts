@@ -1,16 +1,16 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatDialog } from '@angular/material/dialog';
 import { SpectatorRouting } from '@ngneat/spectator';
 import { mockProvider, createRoutingFactory } from '@ngneat/spectator/jest';
+import { TnButtonHarness, TnCheckboxHarness, TnDialog } from '@truenas/ui-components';
+import { MockComponent } from 'ng-mocks';
 import { of, pipe } from 'rxjs';
 import { mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { FormatDateTimePipe } from 'app/modules/dates/pipes/format-date-time/format-datetime.pipe';
+import { IxDateComponent } from 'app/modules/dates/pipes/ix-date/ix-date.component';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { IxCheckboxHarness } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.harness';
 import { LoaderService } from 'app/modules/loader/loader.service';
 import { FileSizePipe } from 'app/modules/pipes/file-size/file-size.pipe';
 import { ApiService } from 'app/modules/websocket/api.service';
@@ -30,6 +30,7 @@ describe('SnapshotDetailsRowComponent', () => {
       ReactiveFormsModule,
       FileSizePipe,
       FormatDateTimePipe,
+      MockComponent(IxDateComponent),
     ],
     providers: [
       mockAuth(),
@@ -52,7 +53,7 @@ describe('SnapshotDetailsRowComponent', () => {
   beforeEach(() => {
     spectator = createComponent({
       props: {
-        snapshot: { ...fakeZfsSnapshot, selected: false },
+        snapshot: fakeZfsSnapshot,
       },
     });
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
@@ -64,45 +65,58 @@ describe('SnapshotDetailsRowComponent', () => {
     expect(rows).toHaveLength(4);
 
     expect(rows[0]).toHaveText('Used: 1.49 TiB');
-    expect(rows[1]).toHaveText('Date created: 2021-10-18 19:51:54');
+    expect(rows[1]).toHaveText('Date created:');
+    expect(spectator.query(IxDateComponent, { parentSelector: '.details-row:nth-child(2)' }).date)
+      .toBe(1634575914 * 1000);
     expect(rows[2]).toHaveText('Referenced: 1.49 TiB');
     expect(rows[3]).toHaveText('Retention: Will be automatically destroyed at 2022-06-07 07:25:14 by periodic snapshot task');
   });
 
   it('should open clone dialog when `Clone To New Dataset` button click', async () => {
-    const matDialog = spectator.inject(MatDialog);
-    jest.spyOn(matDialog, 'open').mockImplementation();
+    const tnDialog = spectator.inject(TnDialog);
+    jest.spyOn(tnDialog, 'open').mockImplementation();
 
-    const cloneButton = await loader.getHarness(MatButtonHarness.with({ text: 'Clone To New Dataset' }));
+    const cloneButton = await loader.getHarness(TnButtonHarness.with({ label: 'Clone To New Dataset' }));
     await cloneButton.click();
 
-    expect(matDialog.open).toHaveBeenCalledWith(SnapshotCloneDialog, { data: fakeZfsSnapshot.name });
+    expect(tnDialog.open).toHaveBeenCalledWith(SnapshotCloneDialog, { data: fakeZfsSnapshot.name });
   });
 
   it('should open rollback dialog when `Rollback` button click', async () => {
-    const matDialog = spectator.inject(MatDialog);
-    jest.spyOn(matDialog, 'open').mockImplementation();
+    const tnDialog = spectator.inject(TnDialog);
+    jest.spyOn(tnDialog, 'open').mockImplementation();
 
-    const rollbackButton = await loader.getHarness(MatButtonHarness.with({ text: 'Rollback' }));
+    const rollbackButton = await loader.getHarness(TnButtonHarness.with({ label: 'Rollback' }));
     await rollbackButton.click();
 
-    expect(matDialog.open).toHaveBeenCalledWith(SnapshotRollbackDialog, { data: fakeZfsSnapshot.name });
+    // The dialog now accepts the full snapshot so it can render the creation
+    // timestamp without a second pool.snapshot.query. By the time the user
+    // clicks Rollback, `pool.snapshot.query` (in ngOnInit) has populated
+    // `snapshotInfo` with `creation`, so the component passes that through.
+    expect(tnDialog.open).toHaveBeenCalledWith(SnapshotRollbackDialog, {
+      data: expect.objectContaining({
+        name: fakeZfsSnapshot.name,
+        properties: expect.objectContaining({
+          creation: expect.objectContaining({ parsed: 1634575914 }),
+        }),
+      }),
+    });
   });
 
   it('should make websocket query when Hold is changed', async () => {
-    const holdCheckbox = await loader.getHarness(IxCheckboxHarness.with({ label: 'Hold' }));
-    expect(await holdCheckbox.getValue()).toBeTruthy();
+    const holdCheckbox = await loader.getHarness(TnCheckboxHarness.with({ label: 'Hold' }));
+    expect(await holdCheckbox.isChecked()).toBeTruthy();
 
     await holdCheckbox.toggle();
     expect(api.call).toHaveBeenCalledWith('pool.snapshot.release', [fakeZfsSnapshot.name]);
-    expect(await holdCheckbox.getValue()).toBeFalsy();
+    expect(await holdCheckbox.isChecked()).toBeFalsy();
 
     await holdCheckbox.toggle();
     expect(api.call).toHaveBeenCalledWith('pool.snapshot.hold', [fakeZfsSnapshot.name]);
   });
 
   it('should delete snapshot when `Delete` button click', async () => {
-    const deleteButton = await loader.getHarness(MatButtonHarness.with({ text: 'Delete' }));
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
     await deleteButton.click();
 
     expect(spectator.inject(DialogService).confirmDelete).toHaveBeenCalledWith({

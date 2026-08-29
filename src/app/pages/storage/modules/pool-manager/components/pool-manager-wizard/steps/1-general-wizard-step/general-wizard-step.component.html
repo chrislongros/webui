@@ -1,34 +1,36 @@
 <ng-container [formGroup]="form">
-  <ix-input
-    formControlName="name"
-    [label]="'Name' | translate"
-    [required]="true"
-    [readonly]="isAddingVdevs()"
-  ></ix-input>
+  <tn-form-field [label]="'Name' | translate" [required]="true">
+    <tn-input
+      formControlName="name"
+      [readonly]="isAddingVdevs()"
+    ></tn-input>
+  </tn-form-field>
 
   @if (!isAddingVdevs()) {
     <!-- Encryption type radio group -->
-    <ix-radio-group
-      formControlName="encryptionType"
-      [label]="'Encryption' | translate"
-      [options]="encryptionTypeOptions$"
-    ></ix-radio-group>
+    <tn-form-field [label]="'Encryption' | translate">
+      <!--
+        Options are projected rather than passed via `[options]` so each one can carry the
+        legacy `radio-button-*` test id; see "Radio groups" in the tn-migration playbook.
+      -->
+      <tn-radio-group formControlName="encryptionType">
+        @for (option of encryptionTypeOptions(); track option.value) {
+          <tn-radio
+            [label]="option.label"
+            [value]="option.value"
+            [testId]="['radio-button', 'encryption-type', option.label]"
+          ></tn-radio>
+        }
+      </tn-radio-group>
+    </tn-form-field>
 
-    <!-- Software Encryption Standard dropdown -->
+    <!-- Info box when SED disks are available but Software encryption is selected -->
     @if (form.controls.encryptionType.value === EncryptionType.Software) {
-      <!-- Info box when SED disks are available but Software selected -->
       @if (hasSedCapableDisks$ | async; as hasSedDisks) {
         @if (hasSedDisks && (isEnterprise$ | async)) {
           <ix-warning color="green" [message]="helptext.sedInfoMessage | translate"></ix-warning>
         }
       }
-
-      <ix-select
-        formControlName="encryptionStandard"
-        [label]="'Encryption Standard' | translate"
-        [options]="encryptionAlgorithmOptions$"
-        [required]="true"
-      ></ix-select>
     }
 
     <!-- SED Password fields -->
@@ -37,37 +39,42 @@
       @if (isSedPasswordSet$ | async; as isPasswordSet) {
         <ix-warning [message]="helptext.sedGlobalPasswordWarning | translate"></ix-warning>
 
-        <ix-input
-          formControlName="sedPassword"
+        <tn-form-field
           [label]="helptext.sedPasswordLabel | translate"
-          [type]="'password'"
-          [required]="false"
           [tooltip]="'Leave blank to keep the existing password, or enter a new password to update it.' | translate"
-        ></ix-input>
+        >
+          <tn-input
+            formControlName="sedPassword"
+            [inputType]="InputType.Password"
+          ></tn-input>
+        </tn-form-field>
 
-        <ix-input
-          formControlName="sedPasswordConfirm"
-          [label]="helptext.sedPasswordConfirmLabel | translate"
-          [type]="'password'"
-          [required]="false"
-        ></ix-input>
+        <tn-form-field [label]="helptext.sedPasswordConfirmLabel | translate">
+          <tn-input
+            formControlName="sedPasswordConfirm"
+            [inputType]="InputType.Password"
+          ></tn-input>
+        </tn-form-field>
       } @else {
         <ix-warning color="green" [message]="helptext.sedGlobalPasswordInfo | translate"></ix-warning>
 
-        <ix-input
-          formControlName="sedPassword"
+        <tn-form-field
           [label]="helptext.sedPasswordLabel | translate"
-          [type]="'password'"
           [required]="true"
           [tooltip]="helptext.sedPasswordTooltip | translate"
-        ></ix-input>
+        >
+          <tn-input
+            formControlName="sedPassword"
+            [inputType]="InputType.Password"
+          ></tn-input>
+        </tn-form-field>
 
-        <ix-input
-          formControlName="sedPasswordConfirm"
-          [label]="helptext.sedPasswordConfirmLabel | translate"
-          [type]="'password'"
-          [required]="true"
-        ></ix-input>
+        <tn-form-field [label]="helptext.sedPasswordConfirmLabel | translate" [required]="true">
+          <tn-input
+            formControlName="sedPasswordConfirm"
+            [inputType]="InputType.Password"
+          ></tn-input>
+        </tn-form-field>
       }
     }
   } @else {
@@ -81,16 +88,13 @@
 
   <ix-form-actions>
     <div class="step-buttons">
-      <button
-        mat-button
-        matStepperNext
+      <tn-button
+        tnStepperNext
         color="primary"
-        type="button"
-        ixTest="next-general"
+        [testId]="'next-general'"
+        [label]="'Next' | translate"
         [disabled]="form.invalid"
-      >
-        {{ 'Next' | translate }}
-      </button>
+      ></tn-button>
     </div>
   </ix-form-actions>
 </ng-container>

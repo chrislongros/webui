@@ -1,33 +1,40 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
+import { FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
-import { MockComponents } from 'ng-mocks';
+import {
+  TnCheckboxComponent,
+  TnCheckboxHarness,
+  TnFormFieldComponent,
+  TnFormSectionComponent,
+  TnInputComponent,
+  TnInputHarness,
+  TnSelectComponent,
+  TnSelectHarness,
+} from '@truenas/ui-components';
+import { MockComponents, ngMocks } from 'ng-mocks';
 import { of } from 'rxjs';
 import { mockApi, mockJob } from 'app/core/testing/utils/mock-api.utils';
-import { DirectoryServicesConfig } from 'app/interfaces/directoryservices-config.interface';
 import { AuthService } from 'app/modules/auth/auth.service';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
 import { ActiveDirectoryConfigComponent } from 'app/pages/directory-service/components/directory-services-form/active-directory-config/active-directory-config.component';
 import { CredentialConfigComponent } from 'app/pages/directory-service/components/directory-services-form/credential-config/credential-config.component';
 import { IpaConfigComponent } from 'app/pages/directory-service/components/directory-services-form/ipa-config/ipa-config.component';
 import { LdapConfigComponent } from 'app/pages/directory-service/components/directory-services-form/ldap-config/ldap-config.component';
 import { DirectoryServicesFormComponent } from './directory-services-form.component';
 
+// MockComponents(...) on the child config forms deep-mocks the tn-* form controls they import,
+// which would otherwise render the parent's own tn-select/tn-checkbox as empty mocks.
+ngMocks.globalKeep(TnFormSectionComponent, true);
+ngMocks.globalKeep(TnFormFieldComponent, true);
+ngMocks.globalKeep(TnInputComponent, true);
+ngMocks.globalKeep(TnSelectComponent, true);
+ngMocks.globalKeep(TnCheckboxComponent, true);
+
 describe('DirectoryServicesConfigFormComponent', () => {
   let spectator: Spectator<DirectoryServicesFormComponent>;
+  let closedSpy: jest.SpyInstance;
   let loader: HarnessLoader;
-  let form: IxFormHarness;
-
-  const mockSlideInRef = {
-    getData: () => null as DirectoryServicesConfig,
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(() => of(false)),
-    swap: jest.fn(),
-  };
 
   const createComponent = createComponentFactory({
     component: DirectoryServicesFormComponent,
@@ -43,7 +50,6 @@ describe('DirectoryServicesConfigFormComponent', () => {
       ReactiveFormsModule,
     ],
     providers: [
-      mockProvider(SlideInRef, mockSlideInRef),
       mockProvider(AuthService, {
         hasRole: jest.fn(() => of(true)),
       }),
@@ -59,10 +65,11 @@ describe('DirectoryServicesConfigFormComponent', () => {
     ],
   });
 
-  beforeEach(async () => {
+  beforeEach(() => {
     spectator = createComponent();
+    closedSpy = jest.spyOn(spectator.component.closed, 'emit');
+    spectator.detectChanges();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    form = await loader.getHarness(IxFormHarness);
   });
 
   it('should create', () => {
@@ -71,44 +78,91 @@ describe('DirectoryServicesConfigFormComponent', () => {
 
   describe('form validation', () => {
     it('should require configuration type selection', async () => {
-      await form.fillForm({
-        'Enable Service': true,
-        'Timeout (seconds)': 60,
-      });
+      const enable = await loader.getHarness(TnCheckboxHarness.with({ label: 'Enable Service' }));
+      await enable.check();
+      const timeout = await loader.getHarness(TnInputHarness.with({ name: 'timeout' }));
+      await timeout.setValue('60');
 
-      expect(await form.getControl('Configuration Type')).toBeTruthy();
-      expect((spectator.component as unknown as { form: { invalid: boolean } }).form.invalid).toBe(true);
+      // The configuration-type select is present but unset, so the form stays invalid and the
+      // host-driven Save action (canSubmit) is disabled.
+      const serviceType = await loader.getHarness(TnSelectHarness);
+      expect(serviceType).toBeTruthy();
+      expect(spectator.component.canSubmit()).toBe(false);
     });
 
     it('should show Active Directory fields when AD configuration is selected', async () => {
-      await form.fillForm({
-        'Configuration Type': 'Active Directory',
-      });
+      const serviceType = await loader.getHarness(TnSelectHarness);
+      await serviceType.selectOption('Active Directory');
+      spectator.detectChanges();
 
       expect(spectator.query(ActiveDirectoryConfigComponent)).toBeTruthy();
     });
 
     it('should show LDAP fields when LDAP configuration is selected', async () => {
-      await form.fillForm({
-        'Configuration Type': 'LDAP',
-      });
+      const serviceType = await loader.getHarness(TnSelectHarness);
+      await serviceType.selectOption('LDAP');
+      spectator.detectChanges();
 
       expect(spectator.query(LdapConfigComponent)).toBeTruthy();
     });
 
     it('should show IPA fields when IPA configuration is selected', async () => {
-      await form.fillForm({
-        'Configuration Type': 'IPA',
-      });
+      const serviceType = await loader.getHarness(TnSelectHarness);
+      await serviceType.selectOption('IPA');
+      spectator.detectChanges();
 
       expect(spectator.query(IpaConfigComponent)).toBeTruthy();
     });
   });
 
+  describe('clearing stale credential validation errors', () => {
+    interface TestableComponent {
+      form: FormGroup;
+      onCredentialDataChanged: (data: unknown) => void;
+      onCredentialValidityChanged: (isValid: boolean) => void;
+    }
+
+    function setBindPasswordError(component: TestableComponent): void {
+      // FormErrorHandlerService maps credential errors (e.g. a wrong bind password) onto
+      // the main form's service_type control via getFieldsMap().
+      component.form.controls.service_type.setErrors({
+        manualValidateError: true,
+        manualValidateErrorMsg: 'The bind password is not correct.',
+        ixManualValidateError: { message: 'The bind password is not correct.' },
+      });
+    }
+
+    it('clears the manual error when the user edits the credential data', () => {
+      const component = spectator.component as unknown as TestableComponent;
+      setBindPasswordError(component);
+      expect(component.form.controls.service_type.errors).not.toBeNull();
+
+      component.onCredentialDataChanged({ username: 'Administrator', password: 'correct' });
+
+      expect(component.form.controls.service_type.errors).toBeNull();
+    });
+
+    it('clears the manual error when credential validity changes', () => {
+      const component = spectator.component as unknown as TestableComponent;
+      setBindPasswordError(component);
+      expect(component.form.controls.service_type.errors).not.toBeNull();
+
+      component.onCredentialValidityChanged(true);
+
+      expect(component.form.controls.service_type.errors).toBeNull();
+    });
+  });
+
   describe('clear config', () => {
-    it('should show confirmation dialog and call API when Clear Config is clicked', async () => {
-      const clearConfigButton = await loader.getHarness(MatButtonHarness.with({ text: 'Clear Config' }));
-      await clearConfigButton.click();
+    // "Clear Config" is now a side-panel footer action; the host container renders the button,
+    // so the isolated component spec invokes the action's onClick directly.
+    function clickClearConfig(): void {
+      const action = spectator.component.footerActions.find((item) => item.testId === 'clear-config');
+      action?.onClick();
+    }
+
+    it('should show confirmation dialog and call API when Clear Config is clicked', () => {
+      clickClearConfig();
 
       expect(spectator.inject(DialogService).confirm).toHaveBeenCalledWith({
         title: 'Clear Directory Services Configuration',
@@ -117,15 +171,14 @@ describe('DirectoryServicesConfigFormComponent', () => {
       });
 
       expect(spectator.inject(DialogService).jobDialog).toHaveBeenCalled();
-      expect(mockSlideInRef.close).toHaveBeenCalledWith({ response: true });
+      expect(closedSpy).toHaveBeenCalledWith(true);
     });
 
-    it('should not call API when confirmation is cancelled', async () => {
+    it('should not call API when confirmation is cancelled', () => {
       const dialogService = spectator.inject(DialogService);
       (dialogService.confirm as jest.Mock).mockReturnValue(of(false));
 
-      const clearConfigButton = await loader.getHarness(MatButtonHarness.with({ text: 'Clear Config' }));
-      await clearConfigButton.click();
+      clickClearConfig();
 
       expect(dialogService.confirm).toHaveBeenCalled();
       expect(dialogService.jobDialog).not.toHaveBeenCalled();

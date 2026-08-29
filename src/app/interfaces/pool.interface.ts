@@ -46,10 +46,19 @@ export interface Pool {
    */
   is_upgraded?: boolean;
   size: number;
+  used?: number;
+  available?: number;
   algorithm: ZfsProperty<string, string>;
   dedup_table_quota: string | null;
   dedup_table_size: number;
   all_sed?: boolean;
+  special_class_used?: number;
+  /**
+   * Raw special-vdev free space as reported by ZFS, before the metadata reserve
+   * is carved out. The Usage card subtracts the configured reserve for display.
+   */
+  special_class_available?: number;
+  special_class_usable?: number;
 }
 
 export type PoolTopology = Record<VDevType, VDevItem[]>;
@@ -72,7 +81,6 @@ export interface CreatePool {
   encryption: boolean;
   encryption_options?: {
     generate_key: boolean;
-    algorithm: string;
     passphrase?: string;
     key?: string;
   };
@@ -83,6 +91,9 @@ export interface CreatePool {
   dedup_table_quota?: NewDeduplicationQuotaSetting;
   deduplication?: DeduplicationSetting;
   allow_duplicate_serials?: boolean;
+  // Community Edition only: bypasses topology policy checks (equal data-vdev width,
+  // RAIDZ/mirror width caps, special/dedup redundancy rule). Rejected on Enterprise.
+  force_topology?: boolean;
 }
 
 export interface UpdatePool {
@@ -92,6 +103,9 @@ export interface UpdatePool {
   all_sed?: boolean;
   dedup_table_quota?: NewDeduplicationQuotaSetting;
   dedup_table_quota_value?: number;
+  // Community Edition only: bypasses topology policy checks (equal data-vdev width,
+  // RAIDZ/mirror width caps, special/dedup redundancy rule). Rejected on Enterprise.
+  force_topology?: boolean;
 }
 
 // TODO: Maybe replace first 5 keys with VDevType enum once old pool manager is removed.

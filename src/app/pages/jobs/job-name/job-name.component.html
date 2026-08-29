@@ -17,11 +17,13 @@
         ></tn-icon>
       }
       @case (JobState.Running) {
-        <mat-spinner
+        <tn-spinner
           class="running"
+          mode="indeterminate"
           [diameter]="22"
-          [matTooltip]="job().progress.description"
-        ></mat-spinner>
+          [tnTooltip]="job().progress.description"
+          [ariaLabel]="job().progress.description || ('Running' | translate)"
+        ></tn-spinner>
       }
       @case (JobState.Waiting) {
         <tn-icon class="waiting" name="clock-outline" library="mdi"></tn-icon>
@@ -43,25 +45,24 @@
     </div>
 
     @if (isRunning()) {
-      <mat-progress-bar
+      <tn-progress-bar
         class="job-progress"
         [value]="job().progress.percent"
         [mode]="job().progress.percent ? 'determinate' : 'indeterminate'"
-        [matTooltip]="job().progress.description"
-      ></mat-progress-bar>
+        [ariaLabel]="'Progress of {job}' | translate: { job: job().description || job().method }"
+        [tnTooltip]="job().progress.description"
+      ></tn-progress-bar>
     }
   </div>
 </div>
 
 @if (isRunning() && job().abortable) {
-  <button
-    mat-icon-button
-    type="button"
-    [ixTest]="['abort-job', job().description]"
-    [matTooltip]="'Abort' | translate"
-    [attr.aria-label]="'Abort' | translate"
-    (click)="onAborted()"
-  >
-    <tn-icon name="close-circle" library="mdi"></tn-icon>
-  </button>
+  <tn-icon-button
+    name="close-circle"
+    library="mdi"
+    [testId]="abortTestId()"
+    [tooltip]="'Abort' | translate"
+    [ariaLabel]="'Abort' | translate"
+    (onClick)="onAborted()"
+  ></tn-icon-button>
 }

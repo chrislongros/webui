@@ -1,28 +1,31 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { KeyValuePipe } from '@angular/common';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { Router } from '@angular/router';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
-import { EMPTY, of } from 'rxjs';
-import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
+import { TnButtonHarness, TnCardComponent, TnDialog } from '@truenas/ui-components';
+import { of } from 'rxjs';
+import { mockJob, mockApi } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
-import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import { ContainerCapabilitiesPolicy, ContainerIdmapType, ContainerStatus } from 'app/enums/container.enum';
-import { ConfirmDeleteCallOptions } from 'app/interfaces/dialog.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { IxFormatterService } from 'app/modules/forms/ix-forms/services/ix-formatter.service';
 import { MapValuePipe } from 'app/modules/pipes/map-value/map-value.pipe';
 import { YesNoPipe } from 'app/modules/pipes/yes-no/yes-no.pipe';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
+import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   ContainerGeneralInfoComponent,
 } from 'app/pages/containers/components/all-containers/container-details/container-general-info/container-general-info.component';
+import {
+  DeleteContainerDialog,
+} from 'app/pages/containers/components/common/delete-container-dialog/delete-container-dialog.component';
 import { ContainerFormComponent } from 'app/pages/containers/components/container-form/container-form.component';
 import { ContainersStore } from 'app/pages/containers/stores/containers.store';
 import { fakeContainer } from 'app/pages/containers/utils/fake-container.utils';
+import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
 const container = fakeContainer({
   id: 1,
@@ -42,11 +45,11 @@ describe('ContainerGeneralInfoComponent', () => {
 
   const createComponent = createComponentFactory({
     component: ContainerGeneralInfoComponent,
-    imports: [RequiresRolesDirective, YesNoPipe, MapValuePipe, KeyValuePipe],
+    imports: [YesNoPipe, MapValuePipe, KeyValuePipe],
     providers: [
       IxFormatterService,
       mockAuth(),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         open: jest.fn(() => SlideInResult.success(true)),
       }),
       mockProvider(ContainersStore, {
@@ -55,11 +58,20 @@ describe('ContainerGeneralInfoComponent', () => {
         reload: jest.fn(),
       }),
       mockApi([
-        mockCall('container.delete'),
+        mockJob('container.delete'),
       ]),
+      mockProvider(TnDialog, {
+        open: jest.fn(() => ({
+          closed: of({ force: false, recursive: false }),
+        })),
+      }),
       mockProvider(DialogService, {
         confirm: jest.fn(() => of(true)),
-        confirmDelete: jest.fn((options: ConfirmDeleteCallOptions) => options.call()),
+        jobDialog: jest.fn(() => ({ afterClosed: () => of({}) })),
+      }),
+      mockProvider(SnackbarService),
+      mockProvider(ErrorHandlerService, {
+        withErrorHandler: jest.fn(() => (source$: unknown) => source$),
       }),
       mockProvider(Router),
     ],
@@ -74,12 +86,11 @@ describe('ContainerGeneralInfoComponent', () => {
   });
 
   it('checks card title', () => {
-    const title = spectator.query('h3');
-    expect(title).toHaveText('General Info');
+    expect(spectator.query(TnCardComponent)!.title()).toBe('General Info');
   });
 
   it('renders details in card', () => {
-    const cardContent = spectator.query('mat-card-content');
+    const cardContent = spectator.query('tn-card');
     expect(cardContent).toContainText('Autostart: Yes');
     expect(cardContent).toContainText('CPU Set: 0-3');
   });
@@ -89,39 +100,59 @@ describe('ContainerGeneralInfoComponent', () => {
       cpuset: null,
     }));
 
-    const cardContent = spectator.query('mat-card-content');
+    const cardContent = spectator.query('tn-card');
     expect(cardContent).toContainText('CPU Set: All Host CPUs');
   });
 
-  it('deletes container when "Delete" button is pressed and redirects to list root', async () => {
-    const deleteButton = await loader.getHarness(MatButtonHarness.with({ text: 'Delete' }));
+  it('deletes container as a job with the options from the dialog and redirects to list root', async () => {
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
     await deleteButton.click();
 
-    expect(spectator.inject(DialogService).confirmDelete).toHaveBeenCalledWith({
-      message: 'Delete Demo?',
-      call: expect.any(Function),
-    });
+    expect(spectator.inject(TnDialog).open).toHaveBeenCalledWith(
+      DeleteContainerDialog,
+      expect.objectContaining({ data: container }),
+    );
 
-    expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('container.delete', [1]);
+    expect(spectator.inject(ApiService).job).toHaveBeenCalledWith(
+      'container.delete',
+      [1, { force: false, recursive: false }],
+    );
+    expect(spectator.inject(SnackbarService).success).toHaveBeenCalledWith('Container deleted');
     expect(spectator.inject(Router).navigate).toHaveBeenCalledWith(['/containers']);
   });
 
-  it('opens edit container form when Edit is pressed', async () => {
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Edit' }));
+  it('passes force and recursive on to the delete job when the dialog asks for them', async () => {
+    const tnDialog = spectator.inject(TnDialog);
+    (tnDialog.open as jest.Mock).mockReturnValue({ closed: of({ force: true, recursive: true }) });
+
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
+    await deleteButton.click();
+
+    expect(spectator.inject(ApiService).job).toHaveBeenCalledWith(
+      'container.delete',
+      [1, { force: true, recursive: true }],
+    );
+  });
+
+  it('opens edit container form in a side panel when Edit is pressed', async () => {
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
     await editButton.click();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(ContainerFormComponent, { data: container });
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(
+      ContainerFormComponent,
+      expect.objectContaining({ inputs: { editContainer: container } }),
+    );
     expect(spectator.inject(ContainersStore).reload).toHaveBeenCalled();
   });
 
-  it('does not delete container when confirmation is cancelled', async () => {
-    const dialogService = spectator.inject(DialogService);
-    (dialogService.confirmDelete as jest.Mock).mockReturnValue(EMPTY);
+  it('does not delete container when the delete dialog is cancelled', async () => {
+    const tnDialog = spectator.inject(TnDialog);
+    (tnDialog.open as jest.Mock).mockReturnValue({ closed: of(false) });
 
-    const deleteButton = await loader.getHarness(MatButtonHarness.with({ text: 'Delete' }));
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
     await deleteButton.click();
 
-    expect(spectator.inject(ApiService).call).not.toHaveBeenCalledWith('container.delete', expect.anything());
+    expect(spectator.inject(ApiService).job).not.toHaveBeenCalled();
     expect(spectator.inject(Router).navigate).not.toHaveBeenCalled();
   });
 
@@ -130,7 +161,7 @@ describe('ContainerGeneralInfoComponent', () => {
       capabilities_policy: ContainerCapabilitiesPolicy.Allow,
     }));
 
-    const cardContent = spectator.query('mat-card-content');
+    const cardContent = spectator.query('tn-card');
     expect(cardContent).toContainText('Capabilities Policy: Allow All');
   });
 
@@ -139,7 +170,7 @@ describe('ContainerGeneralInfoComponent', () => {
       idmap: { type: ContainerIdmapType.Default },
     }));
 
-    const cardContent = spectator.query('mat-card-content');
+    const cardContent = spectator.query('tn-card');
     expect(cardContent).toContainText('ID Map Type: Default');
   });
 
@@ -148,7 +179,7 @@ describe('ContainerGeneralInfoComponent', () => {
       idmap: { type: ContainerIdmapType.Isolated, slice: 5 },
     }));
 
-    const cardContent = spectator.query('mat-card-content');
+    const cardContent = spectator.query('tn-card');
     expect(cardContent).toContainText('ID Map Type: Isolated');
     expect(cardContent).toContainText('Slice: 5');
   });
@@ -158,7 +189,7 @@ describe('ContainerGeneralInfoComponent', () => {
       idmap: null,
     }));
 
-    const cardContent = spectator.query('mat-card-content');
+    const cardContent = spectator.query('tn-card');
     expect(cardContent).toContainText('ID Map Type: Privileged');
   });
 });

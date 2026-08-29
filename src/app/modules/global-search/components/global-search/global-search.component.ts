@@ -2,10 +2,9 @@ import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { Component, ChangeDetectionStrategy, DestroyRef, OnInit, ElementRef, ChangeDetectorRef, AfterViewInit, OnDestroy, Signal, signal, viewChild, DOCUMENT, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
-import { MatInput } from '@angular/material/input';
 import { Store } from '@ngrx/store';
 import { TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent } from '@truenas/ui-components';
+import { TnIconComponent, TnTestIdDirective } from '@truenas/ui-components';
 import {
   debounceTime, filter, switchMap, tap,
 } from 'rxjs';
@@ -21,8 +20,6 @@ import { GlobalSearchSectionsProvider } from 'app/modules/global-search/services
 import { UiSearchDirectivesService } from 'app/modules/global-search/services/ui-search-directives.service';
 import { UiSearchProvider } from 'app/modules/global-search/services/ui-search.service';
 import { SidenavService } from 'app/modules/layout/sidenav.service';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { FocusService } from 'app/services/focus.service';
 import { AppState } from 'app/store';
 import { waitForSystemInfo } from 'app/store/system-info/system-info.selectors';
@@ -35,9 +32,8 @@ import { waitForSystemInfo } from 'app/store/system-info/system-info.selectors';
   imports: [
     CdkTrapFocus,
     TnIconComponent,
-    MatInput,
+    TnTestIdDirective,
     ReactiveFormsModule,
-    TestDirective,
     GlobalSearchResultsComponent,
     TranslateModule,
   ],
@@ -49,7 +45,6 @@ export class GlobalSearchComponent implements OnInit, AfterViewInit, OnDestroy {
   private globalSearchSectionsProvider = inject(GlobalSearchSectionsProvider);
   private cdr = inject(ChangeDetectorRef);
   private store$ = inject<Store<AppState>>(Store);
-  private slideIn = inject(SlideIn);
   private dialogService = inject(DialogService);
   private focusService = inject(FocusService);
   private document = inject<Document>(DOCUMENT);
@@ -154,7 +149,6 @@ export class GlobalSearchComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   closeAllBackdrops(): void {
-    this.slideIn.closeAll();
     this.sidenavService.closeSecondaryMenu();
     this.dialogService.closeAllDialogs();
   }

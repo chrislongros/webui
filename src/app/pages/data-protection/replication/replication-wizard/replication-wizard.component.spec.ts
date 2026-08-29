@@ -1,10 +1,10 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatStepperModule } from '@angular/material/stepper';
-import { MatStepperHarness, MatStepperNextHarness } from '@angular/material/stepper/testing';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import {
+  TnButtonHarness, TnCheckboxHarness, TnInputHarness, TnRadioHarness, TnSelectHarness,
+} from '@truenas/ui-components';
 import { MockComponent } from 'ng-mocks';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
@@ -18,12 +18,8 @@ import { ScheduleMethod } from 'app/enums/schedule-method.enum';
 import { TransportMode } from 'app/enums/transport-mode.enum';
 import { PeriodicSnapshotTask } from 'app/interfaces/periodic-snapshot-task.interface';
 import { ReplicationTask } from 'app/interfaces/replication-task.interface';
-import { IxInputHarness } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.harness';
-import { IxRadioGroupHarness } from 'app/modules/forms/ix-forms/components/ix-radio-group/ix-radio-group.harness';
-import { IxSelectHarness } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.harness';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
+import { IxExplorerHarness } from 'app/modules/forms/ix-forms/components/ix-explorer/ix-explorer.harness';
 import { LocaleService } from 'app/modules/language/locale.service';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { SummaryComponent } from 'app/modules/summary/summary.component';
 import { ApiService } from 'app/modules/websocket/api.service';
@@ -66,21 +62,13 @@ const existingTask: ReplicationTask = {
 
 describe('ReplicationWizardComponent', () => {
   let spectator: Spectator<ReplicationWizardComponent>;
+  let closedSpy: jest.SpyInstance;
   let loader: HarnessLoader;
-  let form: IxFormHarness | null;
-  let nextButton: MatStepperNextHarness | null;
-  const slideInRef: SlideInRef<ReplicationTask, unknown> = {
-    close: jest.fn(),
-    swap: jest.fn(),
-    getData: jest.fn(() => ({} as ReplicationTask)),
-    requireConfirmationWhen: jest.fn(),
-  };
-
+  let nextButton: TnButtonHarness | null;
   const createComponent = createComponentFactory({
     component: ReplicationWizardComponent,
     imports: [
       ReactiveFormsModule,
-      MatStepperModule,
     ],
     declarations: [
       ReplicationWhatAndWhereComponent,
@@ -99,7 +87,6 @@ describe('ReplicationWizardComponent', () => {
         mockCall('pool.snapshot.create'),
         mockCall('replication.create', existingTask),
       ]),
-      mockProvider(SlideInRef, slideInRef),
       mockProvider(SnackbarService),
       mockProvider(LocaleService),
     ],
@@ -107,16 +94,16 @@ describe('ReplicationWizardComponent', () => {
 
   beforeEach(async () => {
     spectator = createComponent();
+    closedSpy = jest.spyOn(spectator.component.closed, 'emit');
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     await updateStepHarnesses();
   });
 
   async function updateStepHarnesses(): Promise<void> {
-    const stepper = await loader.getHarness(MatStepperHarness);
-    const activeStep = (await stepper.getSteps({ selected: true }))[0];
-
-    form = await activeStep.getHarnessOrNull(IxFormHarness);
-    nextButton = await activeStep.getHarnessOrNull(MatStepperNextHarness.with({ text: 'Next' }));
+    // tn-stepper renders only the active step's content, so the single visible
+    // Next button resolves straight from the document-root loader. The last step
+    // has no Next button, so tolerate its absence.
+    nextButton = await loader.getHarnessOrNull(TnButtonHarness.with({ label: 'Next' }));
   }
 
   async function goToNextStep(): Promise<void> {
@@ -124,27 +111,55 @@ describe('ReplicationWizardComponent', () => {
     await updateStepHarnesses();
   }
 
+  function setTnInput(name: string, value: string): Promise<void> {
+    return loader.getHarness(TnInputHarness.with({ selector: `[formControlName="${name}"]` }))
+      .then((input) => input.setValue(value));
+  }
+
+  function selectTnOption(name: string, label: string): Promise<void> {
+    return loader.getHarness(TnSelectHarness.with({ selector: `[formControlName="${name}"]` }))
+      .then((select) => select.selectOption(label));
+  }
+
+  async function setTnCheckbox(name: string, value: boolean): Promise<void> {
+    const checkbox = await loader.getHarness(TnCheckboxHarness.with({ selector: `[formControlName="${name}"]` }));
+    if (value) {
+      await checkbox.check();
+    } else {
+      await checkbox.uncheck();
+    }
+  }
+
+  // The wizard reaches `FormSidePanelContainerComponent` through
+  // `as unknown as Type<SidePanelForm>`, so the compiler cannot check that it still satisfies the
+  // host contract. The container's closeGuard calls `hasUnsavedChanges()` un-chained — losing the
+  // method is a TypeError on close, not a build error, so pin it here.
+  describe('host contract', () => {
+    it('reports no unsaved changes while both steps are pristine', () => {
+      expect(spectator.component.hasUnsavedChanges()).toBe(false);
+    });
+
+    it('reports unsaved changes once a step is dirty', () => {
+      spectator.query(ReplicationWhatAndWhereComponent)!.form.markAsDirty();
+
+      expect(spectator.component.hasUnsavedChanges()).toBe(true);
+    });
+  });
+
   it('creates objects when wizard is submitted', async () => {
-    await form!.fillForm(
-      {
-        'Source Location': 'On this System',
-        'Destination Location': 'On this System',
-        Recursive: false,
-        'Replicate Custom Snapshots': true,
-        'Snapshot Name Regular Expression': '.*',
-        Source: ['pool1/', 'pool2/'],
-        Destination: 'pool3/',
-      },
-    );
+    await selectTnOption('source_datasets_from', 'On this System');
+    await selectTnOption('target_dataset_from', 'On this System');
+    await setTnCheckbox('recursive', false);
+    await setTnCheckbox('custom_snapshots', true);
+    await setTnInput('name_regex', '.*');
+    await (await loader.getHarness(IxExplorerHarness.with({ label: 'Source' }))).setValue(['pool1/', 'pool2/']);
+    await (await loader.getHarness(IxExplorerHarness.with({ label: 'Destination' }))).setValue('pool3/');
 
     await goToNextStep();
 
-    const lifeTimeRadioGroup = await loader.getHarness(
-      IxRadioGroupHarness.with({ label: 'Destination Snapshot Lifetime' }),
-    );
-    await lifeTimeRadioGroup.setValue('Custom');
+    await (await loader.getHarness(TnRadioHarness.with({ label: 'Custom' }))).check();
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
+    const saveButton = await loader.getHarness(TnButtonHarness.with({ label: 'Save' }));
     await saveButton.click();
 
     expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('pool.snapshottask.create', [{
@@ -203,40 +218,26 @@ describe('ReplicationWizardComponent', () => {
     }]);
 
     expect(spectator.inject(SnackbarService).success).toHaveBeenCalledWith('Replication task created.');
-    expect(slideInRef.close).toHaveBeenCalledWith({ response: existingTask });
+    expect(closedSpy).toHaveBeenCalledWith(true);
   });
 
   it('uses custom source snapshot lifetime for periodic snapshot tasks', async () => {
-    await form!.fillForm(
-      {
-        'Source Location': 'On this System',
-        'Destination Location': 'On this System',
-        Recursive: false,
-        'Replicate Custom Snapshots': true,
-        'Snapshot Name Regular Expression': '.*',
-        Source: ['pool1/'],
-        Destination: 'pool3/',
-      },
-    );
+    await selectTnOption('source_datasets_from', 'On this System');
+    await selectTnOption('target_dataset_from', 'On this System');
+    await setTnCheckbox('recursive', false);
+    await setTnCheckbox('custom_snapshots', true);
+    await setTnInput('name_regex', '.*');
+    await (await loader.getHarness(IxExplorerHarness.with({ label: 'Source' }))).setValue(['pool1/']);
+    await (await loader.getHarness(IxExplorerHarness.with({ label: 'Destination' }))).setValue('pool3/');
 
     await goToNextStep();
 
-    const sourceLifetimeInput = await loader.getHarness(
-      IxInputHarness.with({ label: 'Source Snapshot Lifetime' }),
-    );
-    await sourceLifetimeInput.setValue('3');
+    await setTnInput('source_lifetime_value', '3');
+    await selectTnOption('source_lifetime_unit', 'Hours');
 
-    const sourceLifetimeUnit = await loader.getHarness(
-      IxSelectHarness.with({ label: 'Unit' }),
-    );
-    await sourceLifetimeUnit.setValue('Hours');
+    await (await loader.getHarness(TnRadioHarness.with({ label: 'Custom' }))).check();
 
-    const lifeTimeRadioGroup = await loader.getHarness(
-      IxRadioGroupHarness.with({ label: 'Destination Snapshot Lifetime' }),
-    );
-    await lifeTimeRadioGroup.setValue('Custom');
-
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
+    const saveButton = await loader.getHarness(TnButtonHarness.with({ label: 'Save' }));
     await saveButton.click();
 
     expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('pool.snapshottask.create', [{

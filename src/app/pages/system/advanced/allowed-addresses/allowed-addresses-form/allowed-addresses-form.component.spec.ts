@@ -1,11 +1,11 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import {
   createComponentFactory, mockProvider, Spectator,
 } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
+import { TnInputHarness } from '@truenas/ui-components';
 import { of } from 'rxjs';
 import { MockApiService } from 'app/core/testing/classes/mock-api.service';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
@@ -13,23 +13,15 @@ import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { SystemGeneralConfig } from 'app/interfaces/system-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { WarningComponent } from 'app/modules/forms/ix-forms/components/warning/warning.component';
-import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { AllowedAddressesFormComponent } from 'app/pages/system/advanced/allowed-addresses/allowed-addresses-form/allowed-addresses-form.component';
 import { SystemGeneralService } from 'app/services/system-general.service';
 
 describe('AllowedAddressesComponent', () => {
   let spectator: Spectator<AllowedAddressesFormComponent>;
+  let closedSpy: jest.SpyInstance;
   let loader: HarnessLoader;
   let api: ApiService;
-  const componentRef: SlideInRef<unknown, unknown> = {
-    close: jest.fn(),
-    getData: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-  };
   const createComponent = createComponentFactory({
     component: AllowedAddressesFormComponent,
     imports: [
@@ -43,13 +35,9 @@ describe('AllowedAddressesComponent', () => {
           ui_allowlist: ['1.1.1.1/32'],
         } as SystemGeneralConfig),
       ]),
-      mockProvider(SlideIn, {
-        open: jest.fn(() => SlideInResult.empty()),
-      }),
       mockProvider(DialogService, {
         confirm: jest.fn(() => of(true)),
       }),
-      mockProvider(SlideInRef, componentRef),
       mockProvider(SystemGeneralService, {
         handleUiServiceRestart: jest.fn(() => of(true)),
       }),
@@ -58,25 +46,29 @@ describe('AllowedAddressesComponent', () => {
     ],
   });
 
+  const getAddressInput = async (index = 0): Promise<TnInputHarness> => {
+    return (await loader.getAllHarnesses(TnInputHarness))[index];
+  };
+
   beforeEach(() => {
     spectator = createComponent();
+    closedSpy = jest.spyOn(spectator.component.closed, 'emit');
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     api = spectator.inject(ApiService);
   });
 
   it('shows allowed addresses when editing a form', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    const values = await form.getValues();
-
-    expect(values).toEqual({ 'IP Address/Subnet': '1.1.1.1/32' });
+    expect(await (await getAddressInput()).getValue()).toBe('1.1.1.1/32');
   });
 
   it('sends an update payload with specific IP address', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    await form.fillForm({ 'IP Address/Subnet': '2.2.2.2' });
+    await (await getAddressInput()).setValue('2.2.2.2');
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+    spectator.component.submit();
+
+    spectator.detectChanges();
 
     expect(api.call).toHaveBeenCalledWith('system.general.update', [
       { ui_allowlist: ['2.2.2.2'] },
@@ -84,31 +76,34 @@ describe('AllowedAddressesComponent', () => {
   });
 
   it('sends an update payload with an IP address and a subnet mask', async () => {
-    const form = await loader.getHarness(IxFormHarness);
-    await form.fillForm({ 'IP Address/Subnet': '192.168.1.0/24' });
+    await (await getAddressInput()).setValue('192.168.1.0/24');
 
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+    spectator.component.submit();
+
+    spectator.detectChanges();
 
     expect(api.call).toHaveBeenCalledWith('system.general.update', [
       { ui_allowlist: ['192.168.1.0/24'] },
     ]);
   });
 
-  it('closes the form normally when no changes are made', async () => {
-    const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-    await saveButton.click();
+  it('closes the form normally when no changes are made', () => {
+    // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+    spectator.component.submit();
+    spectator.detectChanges();
 
     expect(api.call).not.toHaveBeenCalledWith('system.general.update');
-    expect(componentRef.close).toHaveBeenCalledWith({ response: undefined });
+    // `false` is what FormSidePanelService reads as a cancel, so the opener does not reload.
+    expect(closedSpy).toHaveBeenCalledWith(false);
   });
 
   describe('warnings', () => {
     it('does not show a warning when user already has allowed IPs and adds more', async () => {
       expect(spectator.query(WarningComponent)).not.toExist();
 
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '192.168.1.0/24' });
+      await (await getAddressInput()).setValue('192.168.1.0/24');
 
       expect(spectator.query(WarningComponent)).not.toExist();
     });
@@ -122,8 +117,7 @@ describe('AllowedAddressesComponent', () => {
 
       expect(spectator.query(WarningComponent)).not.toExist();
 
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '192.168.1.0/24' });
+      await (await getAddressInput()).setValue('192.168.1.0/24');
 
       const warning = spectator.query(WarningComponent);
       expect(warning.color()).toBe('red');
@@ -136,31 +130,38 @@ describe('AllowedAddressesComponent', () => {
   describe('SystemGeneralService integration', () => {
     it('should call SystemGeneralService.handleUiServiceRestart when saving changes', async () => {
       const systemGeneralService = spectator.inject(SystemGeneralService);
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '2.2.2.2' });
+      await (await getAddressInput()).setValue('2.2.2.2');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+      spectator.component.submit();
+
+      spectator.detectChanges();
 
       expect(systemGeneralService.handleUiServiceRestart).toHaveBeenCalled();
     });
 
-    it('should not call SystemGeneralService.handleUiServiceRestart when no changes are made', async () => {
+    it('should not call SystemGeneralService.handleUiServiceRestart when no changes are made', () => {
       const systemGeneralService = spectator.inject(SystemGeneralService);
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+      spectator.component.submit();
+
+      spectator.detectChanges();
 
       expect(systemGeneralService.handleUiServiceRestart).not.toHaveBeenCalled();
     });
 
     it('should call SystemGeneralService.handleUiServiceRestart after system.general.update succeeds', async () => {
       const systemGeneralService = spectator.inject(SystemGeneralService);
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '3.3.3.3' });
+      await (await getAddressInput()).setValue('3.3.3.3');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+      spectator.component.submit();
+
+      spectator.detectChanges();
 
       expect(api.call).toHaveBeenCalledWith('system.general.update', [
         { ui_allowlist: ['3.3.3.3'] },
@@ -169,24 +170,28 @@ describe('AllowedAddressesComponent', () => {
     });
 
     it('should close slide-in after successful restart handling', async () => {
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '4.4.4.4' });
+      await (await getAddressInput()).setValue('4.4.4.4');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
 
-      expect(componentRef.close).toHaveBeenCalledWith({ response: true });
+      spectator.component.submit();
+
+      spectator.detectChanges();
+
+      expect(closedSpy).toHaveBeenCalledWith(true);
     });
 
     it('should handle form validation and submission correctly', async () => {
       const systemGeneralService = spectator.inject(SystemGeneralService);
-      const form = await loader.getHarness(IxFormHarness);
 
       // Test with a valid IP address format
-      await form.fillForm({ 'IP Address/Subnet': '10.0.0.1/24' });
+      await (await getAddressInput()).setValue('10.0.0.1/24');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+      spectator.component.submit();
+
+      spectator.detectChanges();
 
       expect(api.call).toHaveBeenCalledWith('system.general.update', [
         { ui_allowlist: ['10.0.0.1/24'] },
@@ -196,18 +201,20 @@ describe('AllowedAddressesComponent', () => {
 
     it('should show success message and handle restart flow', async () => {
       const systemGeneralService = spectator.inject(SystemGeneralService);
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '5.5.5.5' });
+      await (await getAddressInput()).setValue('5.5.5.5');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+      spectator.component.submit();
+
+      spectator.detectChanges();
 
       // Verify the flow: update -> restart -> close
       expect(api.call).toHaveBeenCalledWith('system.general.update', [
         { ui_allowlist: ['5.5.5.5'] },
       ]);
       expect(systemGeneralService.handleUiServiceRestart).toHaveBeenCalled();
-      expect(componentRef.close).toHaveBeenCalledWith({ response: true });
+      expect(closedSpy).toHaveBeenCalledWith(true);
     });
 
     it('should handle restart cancellation gracefully', async () => {
@@ -215,15 +222,17 @@ describe('AllowedAddressesComponent', () => {
       // Mock restart to return false (user cancelled)
       (systemGeneralService.handleUiServiceRestart as jest.Mock) = jest.fn(() => of(true));
 
-      const form = await loader.getHarness(IxFormHarness);
-      await form.fillForm({ 'IP Address/Subnet': '6.6.6.6' });
+      await (await getAddressInput()).setValue('6.6.6.6');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      // Panel-hosted form: the `<tn-side-panel>` footer owns Save and calls `submit()`.
+
+      spectator.component.submit();
+
+      spectator.detectChanges();
 
       // Even if restart is cancelled, the form should still close successfully
       expect(systemGeneralService.handleUiServiceRestart).toHaveBeenCalled();
-      expect(componentRef.close).toHaveBeenCalledWith({ response: true });
+      expect(closedSpy).toHaveBeenCalledWith(true);
     });
   });
 });

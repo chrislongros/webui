@@ -1,11 +1,11 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatDialog } from '@angular/material/dialog';
-import { MatSlideToggleHarness } from '@angular/material/slide-toggle/testing';
 import { Spectator } from '@ngneat/spectator';
 import { createComponentFactory, mockProvider } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
+import {
+  TnButtonHarness, TnDialog, TnSelectHarness, TnSlideToggleHarness, TnTableHarness,
+} from '@truenas/ui-components';
 import { MockComponent } from 'ng-mocks';
 import { of } from 'rxjs';
 import { fakeSuccessfulJob } from 'app/core/testing/utils/fake-job.utils';
@@ -24,18 +24,16 @@ import { PeriodicSnapshotTask } from 'app/interfaces/periodic-snapshot-task.inte
 import { ReplicationTask } from 'app/interfaces/replication-task.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { IxTableHarness } from 'app/modules/ix-table/components/ix-table/ix-table.harness';
-import {
-  IxTableColumnsSelectorComponent,
-} from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import {
-  IxTableDetailsRowComponent,
-} from 'app/modules/ix-table/components/ix-table-details-row/ix-table-details-row.component';
-import { IxTableDetailsRowDirective } from 'app/modules/ix-table/directives/ix-table-details-row.directive';
 import { selectJobs } from 'app/modules/jobs/store/job.selectors';
 import { PageHeaderComponent } from 'app/modules/page-header/page-title-header/page-header.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SlideInResult } from 'app/modules/slide-ins/slide-in-result';
+import {
+  TableColumnPickerComponent,
+} from 'app/modules/tn-table/components/table-column-picker/table-column-picker.component';
+import {
+  TableDetailsRowComponent,
+} from 'app/modules/tn-table/components/table-details-row/table-details-row.component';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { ReplicationFormComponent } from 'app/pages/data-protection/replication/replication-form/replication-form.component';
 import { ReplicationListComponent } from 'app/pages/data-protection/replication/replication-list/replication-list.component';
@@ -116,7 +114,7 @@ const tasks = [{
 describe('ReplicationListComponent', () => {
   let spectator: Spectator<ReplicationListComponent>;
   let loader: HarnessLoader;
-  let table: IxTableHarness;
+  let table: TnTableHarness;
 
   beforeEach(() => fakeDate(new Date('2026-01-20T00:00:00Z')));
   afterEach(() => restoreDate());
@@ -126,9 +124,8 @@ describe('ReplicationListComponent', () => {
     imports: [
       MockComponent(PageHeaderComponent),
       BasicSearchComponent,
-      IxTableDetailsRowDirective,
-      IxTableDetailsRowComponent,
-      IxTableColumnsSelectorComponent,
+      TableDetailsRowComponent,
+      TableColumnPickerComponent,
     ],
     providers: [
       mockAuth(),
@@ -154,16 +151,16 @@ describe('ReplicationListComponent', () => {
         mockJob('replication.run', fakeSuccessfulJob()),
         mockCall('replication.delete'),
       ]),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         open: jest.fn(() => SlideInResult.empty()),
       }),
       mockProvider(DialogService, {
         confirm: jest.fn(() => of(true)),
         confirmDelete: jest.fn((options: ConfirmDeleteCallOptions) => options.call()),
       }),
-      mockProvider(MatDialog, {
+      mockProvider(TnDialog, {
         open: jest.fn(() => ({
-          afterClosed: () => of(true),
+          closed: of(true),
         })),
       }),
       mockProvider(DownloadService, {
@@ -175,24 +172,31 @@ describe('ReplicationListComponent', () => {
   beforeEach(async () => {
     spectator = createComponent();
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
-    table = await loader.getHarness(IxTableHarness);
+    table = await loader.getHarness(TnTableHarness);
   });
 
   it('should show table rows', async () => {
-    const expectedRows = [
-      ['Name', 'Direction', 'Last Run', 'State', 'Enabled', 'Last Snapshot'],
+    expect(await table.getHeaderTexts()).toEqual([
+      'Name', 'Direction', 'Last Run', 'State', 'Enabled', 'Last Snapshot',
+    ]);
+    expect(await table.getAllRowTexts()).toEqual([
       ['pewl - pewl', 'PUSH', '1 min. ago', 'Hold', '', 'No snapshots sent yet'],
-    ];
+    ]);
+  });
 
-    const cells = await table.getCellTexts();
-    expect(cells).toEqual(expectedRows);
+  it('expands the detail row when the row itself is clicked', async () => {
+    expect(await table.isRowExpanded(0)).toBe(false);
+
+    await table.clickRow(0);
+
+    expect(await table.isRowExpanded(0)).toBe(true);
   });
 
   it('shows confirmation dialog when Run Now button is pressed', async () => {
     jest.spyOn(spectator.inject(DialogService), 'confirm');
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const runNowButton = await loader.getHarness(MatButtonHarness.with({ text: 'Run Now' }));
+    const runNowButton = await loader.getHarness(TnButtonHarness.with({ label: 'Run Now' }));
     await runNowButton.click();
 
     expect(spectator.inject(DialogService).confirm).toHaveBeenCalledWith({
@@ -204,38 +208,41 @@ describe('ReplicationListComponent', () => {
   });
 
   it('shows wizard when the add button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const addButton = await loader.getHarness(MatButtonHarness.with({ text: 'Add' }));
+    const addButton = await loader.getHarness(TnButtonHarness.with({ label: 'Add' }));
     await addButton.click();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(
       ReplicationWizardComponent,
       {
+        title: 'Replication Task Wizard',
         wide: true,
+        footerless: true,
       },
     );
   });
 
   it('shows form to edit an existing interface when edit button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Edit' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Edit' }));
     await editButton.click();
 
-    expect(spectator.inject(SlideIn).open).toHaveBeenCalledWith(
+    expect(spectator.inject(FormSidePanelService).open).toHaveBeenCalledWith(
       ReplicationFormComponent,
       {
+        title: 'Edit Replication Task',
         wide: true,
-        data: expect.objectContaining(tasks[0]),
+        inputs: { replicationToEdit: expect.objectContaining(tasks[0]) },
       },
     );
   });
 
   it('deletes a task with confirmation when delete button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    const deleteButton = await loader.getHarness(MatButtonHarness.with({ text: 'Delete' }));
+    const deleteButton = await loader.getHarness(TnButtonHarness.with({ label: 'Delete' }));
     await deleteButton.click();
 
     expect(spectator.inject(DialogService).confirmDelete).toHaveBeenCalledWith({
@@ -247,20 +254,20 @@ describe('ReplicationListComponent', () => {
   });
 
   it('shows dialog when Restore button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    jest.spyOn(spectator.inject(MatDialog), 'open');
+    jest.spyOn(spectator.inject(TnDialog), 'open');
 
-    const editButton = await loader.getHarness(MatButtonHarness.with({ text: 'Restore' }));
+    const editButton = await loader.getHarness(TnButtonHarness.with({ label: 'Restore' }));
     await editButton.click();
 
-    expect(spectator.inject(MatDialog).open).toHaveBeenCalledWith(ReplicationRestoreDialog, {
+    expect(spectator.inject(TnDialog).open).toHaveBeenCalledWith(ReplicationRestoreDialog, {
       data: 1,
     });
   });
 
   it('updates task enabled status once slide-toggle is updated', async () => {
-    const toggle = await table.getHarnessInCell(MatSlideToggleHarness, 1, 4);
+    const toggle = await loader.getHarness(TnSlideToggleHarness.with({ ancestor: 'tn-table' }));
 
     expect(await toggle.isChecked()).toBe(false);
 
@@ -272,12 +279,46 @@ describe('ReplicationListComponent', () => {
     );
   });
 
+  // The visible `Enabled` column renders as a toggle from the template, but the picker can hide
+  // it, and <ix-table-details-row> only prints text — so it falls back to plain yes/no there.
+  it('renders the hidden Enabled column as text, not a toggle, in the detail row', async () => {
+    const picker = await loader.getHarness(TnSelectHarness.with({ ancestor: 'ix-table-column-picker' }));
+    await picker.open();
+    await picker.selectOption('Enabled');
+    spectator.detectChanges();
+
+    expect(await table.getHeaderTexts()).not.toContain('Enabled');
+
+    await table.toggleRowExpansion(0);
+
+    expect(spectator.query('ix-table-details-row')).toHaveText('Enabled');
+    expect(await loader.getAllHarnesses(TnSlideToggleHarness)).toHaveLength(0);
+  });
+
+  // A detail row prints text, so every column whose cell formats its value in the template has to
+  // say how to print it — otherwise the row shows a raw API code or an epoch number.
+  it('prints the hidden State and Last Run columns the way their cells render them', async () => {
+    const picker = await loader.getHarness(TnSelectHarness.with({ ancestor: 'ix-table-column-picker' }));
+    await picker.open();
+    await picker.selectOption('State');
+    await picker.selectOption('Last Run');
+    spectator.detectChanges();
+
+    await table.toggleRowExpansion(0);
+
+    // The job subscription has replaced the task's own state with its last job by now.
+    const detailsRow = spectator.query('ix-table-details-row');
+    expect(detailsRow).toHaveText('State:Completed');
+    expect(detailsRow).not.toHaveText(JobState.Success);
+    expect(detailsRow).toHaveText('Last Run:N/A');
+  });
+
   it('checks if downloads encryption keys when button is pressed', async () => {
-    await table.expandRow(0);
+    await table.toggleRowExpansion(0);
 
-    jest.spyOn(spectator.inject(MatDialog), 'open');
+    jest.spyOn(spectator.inject(TnDialog), 'open');
 
-    const downloadKeysButtons = await loader.getHarness(MatButtonHarness.with({ text: 'Download Keys' }));
+    const downloadKeysButtons = await loader.getHarness(TnButtonHarness.with({ label: 'Download Keys' }));
     await downloadKeysButtons.click();
 
     expect(spectator.inject(DownloadService).coreDownload).toHaveBeenCalledWith({

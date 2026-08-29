@@ -1,17 +1,16 @@
 import { DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, input, OnChanges, OnInit, inject } from '@angular/core';
-import { MatAnchor } from '@angular/material/button';
-import {
-  MatCard, MatCardHeader, MatCardTitle, MatCardContent,
-} from '@angular/material/card';
 import { RouterLink } from '@angular/router';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
+import {
+  TnButtonComponent, TnCardComponent, TnCardFooterActionsDirective, TnCardHeaderDirective,
+  TnTestIdDirective,
+} from '@truenas/ui-components';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
 import { PoolCardIconType } from 'app/enums/pool-card-icon-type.enum';
 import { TemperatureUnit } from 'app/enums/temperature.enum';
 import { StorageDashboardDisk } from 'app/interfaces/disk.interface';
 import { Pool } from 'app/interfaces/pool.interface';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { diskHealthCardElements } from 'app/pages/storage/components/dashboard-pool/disk-health-card/disk-health-card.elements';
 import { PoolCardIconComponent } from 'app/pages/storage/components/dashboard-pool/pool-card-icon/pool-card-icon.component';
 import { getPoolDisks } from 'app/pages/storage/modules/disks/utils/get-pool-disks.utils';
@@ -30,21 +29,20 @@ interface DiskState {
   styleUrls: ['./disk-health-card.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
+    TnCardComponent,
+    TnCardHeaderDirective,
+    TnCardFooterActionsDirective,
     UiSearchDirective,
-    MatCardHeader,
-    MatCardTitle,
     PoolCardIconComponent,
-    MatAnchor,
-    TestDirective,
+    TnButtonComponent,
+    TnTestIdDirective,
     RouterLink,
-    MatCardContent,
     TranslateModule,
     DecimalPipe,
   ],
 })
 export class DiskHealthCardComponent implements OnInit, OnChanges {
-  translate = inject(TranslateService);
+  private translate = inject(TranslateService);
 
   readonly poolState = input.required<Pool>();
   readonly disks = input<StorageDashboardDisk[]>([]);
@@ -56,9 +54,7 @@ export class DiskHealthCardComponent implements OnInit, OnChanges {
   }
 
   get isTemperatureDataAvailable(): boolean {
-    return Boolean(
-      this.diskState.highestTemperature && this.diskState.lowestTemperature && this.diskState.averageTemperature,
-    );
+    return this.isHighestTempReady || this.isLowestTempReady || this.isAverageTempReady;
   }
 
   diskState: DiskState = {
@@ -109,6 +105,8 @@ export class DiskHealthCardComponent implements OnInit, OnChanges {
   }
 
   private loadTemperatures(): void {
+    this.diskState.highestTemperature = null;
+    this.diskState.lowestTemperature = null;
     let avgSum = 0;
     let avgCounter = 0;
     this.disks().forEach((disk) => {
@@ -116,22 +114,26 @@ export class DiskHealthCardComponent implements OnInit, OnChanges {
         return;
       }
 
-      if (this.diskState.highestTemperature === null) {
-        this.diskState.highestTemperature = disk.tempAggregates.max;
-      } else {
-        this.diskState.highestTemperature = Math.max(this.diskState.highestTemperature, disk.tempAggregates.max);
+      const { min, max, avg } = disk.tempAggregates;
+
+      if (max != null) {
+        this.diskState.highestTemperature = this.diskState.highestTemperature === null
+          ? max
+          : Math.max(this.diskState.highestTemperature, max);
       }
 
-      if (this.diskState.lowestTemperature === null) {
-        this.diskState.lowestTemperature = disk.tempAggregates.min;
-      } else {
-        this.diskState.lowestTemperature = Math.min(this.diskState.lowestTemperature, disk.tempAggregates.min);
+      if (min != null) {
+        this.diskState.lowestTemperature = this.diskState.lowestTemperature === null
+          ? min
+          : Math.min(this.diskState.lowestTemperature, min);
       }
 
-      avgSum += disk.tempAggregates.avg;
-      avgCounter++;
+      if (avg != null) {
+        avgSum += avg;
+        avgCounter++;
+      }
     });
 
-    this.diskState.averageTemperature = avgSum / avgCounter;
+    this.diskState.averageTemperature = avgCounter ? avgSum / avgCounter : null;
   }
 }

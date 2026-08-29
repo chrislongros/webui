@@ -1,31 +1,25 @@
-import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, signal, OnInit, computed, inject, DestroyRef } from '@angular/core';
+import {
+  ChangeDetectionStrategy, Component, signal, OnInit, computed, inject, DestroyRef,
+} from '@angular/core';
 import { toSignal, takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatDialog } from '@angular/material/dialog';
-import { MatToolbarRow } from '@angular/material/toolbar';
 import { Store } from '@ngrx/store';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { tnIconMarker } from '@truenas/ui-components';
-import { finalize, forkJoin, of } from 'rxjs';
 import {
-  catchError,
-  filter, tap,
-} from 'rxjs/operators';
+  tnIconMarker, TnCardComponent, TnCardHeaderActionsDirective, TnCellDefDirective, TnDialog,
+  TnHeaderCellDefDirective, TnTableColumnDirective, TnTableComponent, TnTablePagerComponent, TnTestIdDirective,
+  type TnSortEvent,
+} from '@truenas/ui-components';
+import { finalize, forkJoin, of } from 'rxjs';
+import { filter, tap } from 'rxjs/operators';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
+import { EmptyType } from 'app/enums/empty-type.enum';
 import { FibreChannelHost, FibreChannelPort, FibreChannelStatus } from 'app/interfaces/fibre-channel.interface';
 import { EmptyService } from 'app/modules/empty/empty.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { ArrayDataProvider } from 'app/modules/ix-table/classes/array-data-provider/array-data-provider';
-import { IxTableComponent } from 'app/modules/ix-table/components/ix-table/ix-table.component';
-import { actionsWithMenuColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-actions-with-menu/ix-cell-actions-with-menu.component';
-import { textColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-text/ix-cell-text.component';
-import { IxTableBodyComponent } from 'app/modules/ix-table/components/ix-table-body/ix-table-body.component';
-import { IxTableHeadComponent } from 'app/modules/ix-table/components/ix-table-head/ix-table-head.component';
-import { IxTablePagerComponent } from 'app/modules/ix-table/components/ix-table-pager/ix-table-pager.component';
-import { IxTableEmptyDirective } from 'app/modules/ix-table/directives/ix-table-empty.directive';
-import { createTable } from 'app/modules/ix-table/utils';
-import { FakeProgressBarComponent } from 'app/modules/loader/components/fake-progress-bar/fake-progress-bar.component';
+import { ArrayDataProvider } from 'app/modules/tn-table/classes/array-data-provider/array-data-provider';
+import { IconActionConfig } from 'app/modules/tn-table/interfaces/icon-action-config.interface';
+import { dataProviderRows, mapTnSortToTableSort, toUniqueRowTag } from 'app/modules/tn-table/utils';
+import { TableActionsCellComponent } from 'app/modules/tn-table-cells/actions-cell/table-actions-cell.component';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   buildPortsTableRow,
@@ -45,26 +39,25 @@ import { selectIsHaLicensed } from 'app/store/ha-info/ha-info.selectors';
   styleUrl: './fibre-channel-ports.component.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    FakeProgressBarComponent,
-    IxTableBodyComponent,
-    IxTableComponent,
-    IxTableEmptyDirective,
-    IxTableHeadComponent,
-    IxTablePagerComponent,
-    MatCard,
-    MatCardContent,
-    MatToolbarRow,
+    TnCardComponent,
+    TnCardHeaderActionsDirective,
     BasicSearchComponent,
+    TnTableComponent,
+    TnTableColumnDirective,
+    TnHeaderCellDefDirective,
+    TnCellDefDirective,
+    TableActionsCellComponent,
+    TnTablePagerComponent,
+    TnTestIdDirective,
     TranslateModule,
     UiSearchDirective,
-    AsyncPipe,
   ],
 })
 export class FibreChannelPortsComponent implements OnInit {
   private api = inject(ApiService);
   private translate = inject(TranslateService);
   private store$ = inject<Store<AppState>>(Store);
-  private matDialog = inject(MatDialog);
+  private tnDialog = inject(TnDialog);
   protected emptyService = inject(EmptyService);
   private errorHandler = inject(ErrorHandlerService);
   private destroyRef = inject(DestroyRef);
@@ -72,78 +65,99 @@ export class FibreChannelPortsComponent implements OnInit {
   protected readonly searchableElements = fibreChannelPortsElements;
   protected searchQuery = signal<string>('');
   protected dataProvider = new ArrayDataProvider<FibreChannelPortRow>();
+  protected readonly currentPage = dataProviderRows(this.dataProvider);
+  protected readonly emptyType = toSignal(this.dataProvider.emptyType$);
   protected isLoading = signal(false);
   protected isHa = toSignal(this.store$.select(selectIsHaLicensed));
 
   private rows = signal<FibreChannelPortRow[]>([]);
 
-  protected columns = computed(() => {
-    return createTable<FibreChannelPortRow>([
-      textColumn({
-        title: this.translate.instant('Port'),
-        propertyName: 'name',
-        getValue: (row) => {
-          if (row.isPhysical) {
-            return row.name;
-          }
+  protected readonly actions: IconActionConfig<FibreChannelPortRow>[] = [
+    {
+      iconName: tnIconMarker('pencil', 'mdi'),
+      tooltip: this.translate.instant('Edit'),
+      onClick: (row) => this.doEdit(row),
+      hidden: (row) => of(!row.isPhysical),
+    },
+  ];
 
-          return ` – ${this.translate.instant('{port} (virtual)', { port: row.name })}`;
-        },
-        disableSorting: true,
-      }),
-      textColumn({
-        title: this.translate.instant('Target'),
-        propertyName: 'target',
-        getValue: (row) => {
-          return row.target?.iscsi_target_name || '-';
-        },
-        disableSorting: true,
-      }),
-      textColumn({
-        title: this.translate.instant('WWPN'),
-        propertyName: 'wwpn',
-        getValue: (row) => this.resolveWwpn(row, 'wwpn'),
-        disableSorting: true,
-      }),
-      textColumn({
-        title: this.translate.instant('WWPN (B)'),
-        propertyName: 'wwpn_b',
-        getValue: (row) => this.resolveWwpn(row, 'wwpn_b'),
-        hidden: !this.isHa(),
-        disableSorting: true,
-      }),
-      textColumn({
-        title: this.translate.instant('State'),
-        getValue: (row) => {
-          return `A: ${row.aPortState || '–'} B: ${row.bPortState || '–'}`;
-        },
-        hidden: !this.isHa(),
-        disableSorting: true,
-      }),
-      actionsWithMenuColumn({
-        disableSorting: true,
-        actions: [
-          {
-            iconName: tnIconMarker('pencil', 'mdi'),
-            tooltip: this.translate.instant('Edit'),
-            onClick: (row) => this.doEdit(row),
-            hidden: (row) => of(!row.isPhysical),
-          },
-        ],
-      }),
-    ], {
-      uniqueRowTag: (row) => 'fibre-channel-port-' + row.name,
-      ariaLabels: (row) => [row.name, this.translate.instant('Fibre Channel Port')],
-    });
+  // The WWPN (B) and State columns only apply to HA systems.
+  protected readonly displayedColumns = computed<string[]>(() => {
+    const columns = ['name', 'target', 'wwpn'];
+    if (this.isHa()) {
+      columns.push('wwpn_b', 'state');
+    }
+    columns.push('actions');
+    return columns;
   });
+
+  protected readonly trackByPortName = (_index: number, row: FibreChannelPortRow): string => row.name;
+
+  protected uniqueRowTag(row: FibreChannelPortRow): string {
+    return toUniqueRowTag('fibre-channel-port-' + row.name);
+  }
+
+  protected ariaLabel(row: FibreChannelPortRow): string {
+    return [row.name, this.translate.instant('Fibre Channel Port')].join(' ');
+  }
+
+  protected portLabel(row: FibreChannelPortRow): string {
+    if (row.isPhysical) {
+      return row.name;
+    }
+
+    return ` – ${this.translate.instant('{port} (virtual)', { port: row.name })}`;
+  }
+
+  protected stateLabel(row: FibreChannelPortRow): string {
+    return `A: ${row.aPortState || '–'} B: ${row.bPortState || '–'}`;
+  }
+
+  protected targetLabel(row: FibreChannelPortRow): string {
+    return row.target?.iscsi_target_name || '-';
+  }
+
+  protected wwpnLabel(row: FibreChannelPortRow, key: 'wwpn' | 'wwpn_b'): string {
+    return row[key] || '-';
+  }
+
+  protected onSortChange(event: TnSortEvent): void {
+    this.dataProvider.setSorting(mapTnSortToTableSort<FibreChannelPortRow>(
+      event,
+      this.displayedColumns(),
+      { sortAccessors: this.sortAccessors },
+    ));
+  }
+
+  private readonly sortByWwpnB = (row: FibreChannelPortRow): string => this.wwpnLabel(row, 'wwpn_b');
+
+  /**
+   * Most cells render more than the property behind their column — a nested target name, a composed
+   * state label — so those columns sort by what they render. Sorting by the raw row property would
+   * order Target by an object and leave State unsorted entirely.
+   *
+   * `name` is the exception: it sorts by {@link portNameSortKey}, not by the rendered label, which
+   * carries a leading dash on virtual ports and would clump them all together away from their host.
+   *
+   * A column left out of this record sorts by its raw row property.
+   */
+  private readonly sortAccessors: Record<string, (row: FibreChannelPortRow) => string> = {
+    name: (row) => portNameSortKey(row.name),
+    target: (row) => this.targetLabel(row),
+    wwpn: (row) => this.wwpnLabel(row, 'wwpn'),
+    // Named field rather than an inline arrow: the linter reads a snake_case key with a function
+    // literal as a badly named method.
+    wwpn_b: this.sortByWwpnB,
+    state: (row) => this.stateLabel(row),
+  };
 
   ngOnInit(): void {
     this.loadTable();
   }
 
-  doEdit(row: FibreChannelPortRow): void {
-    this.matDialog.open(VirtualPortsNumberDialog, { data: row.host })
-      .afterClosed()
+  protected doEdit(row: FibreChannelPortRow): void {
+    this.tnDialog.open(VirtualPortsNumberDialog, { data: row.host })
+      .closed
       .pipe(
         filter(Boolean),
         tap(() => this.loadTable()),
@@ -153,44 +167,65 @@ export class FibreChannelPortsComponent implements OnInit {
 
   protected onListFiltered(query: string): void {
     this.searchQuery.set(query);
-    this.dataProvider.setFilter({
-      query,
-      // TODO: This should be fixed in dataprovider
-      list: this.rows(),
-      columnKeys: ['name', 'wwpn', 'wwpn_b'],
-    });
+    this.applyFilter();
+  }
+
+  /**
+   * Re-applies the current search to the loaded rows. Called on reload too, so editing a port
+   * doesn't silently drop the filter the user is looking through.
+   */
+  private applyFilter(): void {
+    const query = this.searchQuery();
+
+    if (query) {
+      this.dataProvider.setFilter({
+        query,
+        // TODO: This should be fixed in dataprovider
+        list: this.rows(),
+        columnKeys: ['name', 'target', 'wwpn', 'wwpn_b'],
+        // The Target cell renders a name off a nested object, which the filter can't reach on its own.
+        preprocessMap: {
+          target: (target) => target?.iscsi_target_name || '',
+        },
+      });
+    } else {
+      this.dataProvider.setRows(this.rows());
+    }
+
+    // ArrayDataProvider never resolves its own empty type, so without this the table shows the
+    // loading placeholder in place of "No Search Results" whenever a search matches nothing.
+    this.dataProvider.setEmptyType(this.rows().length ? EmptyType.NoSearchResults : EmptyType.NoPageData);
   }
 
   private loadTable(): void {
     this.isLoading.set(true);
+    this.dataProvider.setEmptyType(EmptyType.Loading);
     forkJoin([
       this.api.call('fc.fc_host.query'),
       this.api.call('fcport.query'),
       this.api.call('fcport.status'),
     ])
       .pipe(
+        // `withErrorHandler()` is an operator, not a `catchError` selector — handed to `catchError`
+        // it was called with the error itself and threw `error.pipe is not a function`, so a failed
+        // query left the page on its loading placeholder with no error dialog.
+        tap({ error: () => this.dataProvider.setEmptyType(EmptyType.Errors) }),
+        this.errorHandler.withErrorHandler(),
         finalize(() => this.isLoading.set(false)),
-        catchError(this.errorHandler.withErrorHandler()),
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe(([hosts, ports, statuses]: [FibreChannelHost[], FibreChannelPort[], FibreChannelStatus[]]) => {
         this.rows.set(buildPortsTableRow(hosts, ports, statuses));
-        this.dataProvider.setRows(this.rows());
+        this.applyFilter();
       });
   }
+}
 
-  private resolveWwpn(row: FibreChannelPortRow, key: 'wwpn' | 'wwpn_b'): string {
-    if (row?.[key]) {
-      return row[key];
-    }
-
-    const aliasPrefix = row?.host?.alias?.split?.('/')?.[0];
-    const isPhysical = row?.name === aliasPrefix;
-
-    if (isPhysical && row?.host?.[key]) {
-      return row.host[key];
-    }
-
-    return '-';
-  }
+/**
+ * Orders port names the way they read: `fc2` before `fc10`. Plain string comparison orders
+ * digit runs lexically and gets that wrong, so every digit run is zero-padded to a fixed width
+ * first. Virtual ports stay grouped under their host either way — `/` sorts below every digit.
+ */
+function portNameSortKey(name: string): string {
+  return name.replace(/\d+/g, (digits) => digits.padStart(6, '0'));
 }

@@ -129,7 +129,6 @@ describe('AddVdevsComponent – Add Vdev to existing pool', () => {
         }),
         mockCall('enclosure2.query', [] as Enclosure[]),
         mockCall('pool.query', []),
-        mockCall('pool.dataset.encryption_algorithm_choices', {}),
         mockJob('pool.update', fakeSuccessfulJob()),
       ]),
       mockProvider(PoolWizardNameValidationService, {
@@ -169,8 +168,8 @@ describe('AddVdevsComponent – Add Vdev to existing pool', () => {
     expect(dataStepValues).toEqual({
       'Disk Size': '',
       Layout: TopologyItemType.Mirror,
-      'Number of VDEVs': '--',
-      Width: '--',
+      'Number of VDEVs': '',
+      Width: '',
     });
 
     await wizard.fillStep({
@@ -225,9 +224,9 @@ describe('AddVdevsComponent – Add Vdev to existing pool', () => {
     await wizard.clickNext();
     expect(await (await wizard.getActiveStep()).getLabel()).toBe('Cache (Optional)');
 
-    // Metadata step
+    // Special step
     await wizard.clickNext();
-    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Metadata (Optional)');
+    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Special (Optional)');
 
     // Dedup step
     await wizard.clickNext();
@@ -247,8 +246,7 @@ describe('AddVdevsComponent – Add Vdev to existing pool', () => {
     });
 
     // Review step
-    const stepper = await wizard.getStepper();
-    await stepper.selectStep({ label: 'Review' });
+    await wizard.goToStep('Review');
 
     expect(await (await wizard.getActiveStep()).getLabel()).toBe('Review');
 

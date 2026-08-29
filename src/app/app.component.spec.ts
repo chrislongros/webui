@@ -6,7 +6,7 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import { WINDOW } from 'app/helpers/window.helper';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { LayoutService } from 'app/modules/layout/layout.service';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { PingService } from 'app/modules/websocket/ping.service';
 import { selectIsPanelOpen } from 'app/modules/websocket-debug-panel/store/websocket-debug.selectors';
@@ -32,7 +32,7 @@ describe('AppComponent', () => {
         closeAllDialogs: jest.fn(),
       }),
       mockProvider(SnackbarService),
-      mockProvider(SlideIn, {
+      mockProvider(FormSidePanelService, {
         closeAll: jest.fn(),
       }),
       mockProvider(PingService, {
@@ -90,5 +90,11 @@ describe('AppComponent', () => {
 
     expect(spectator.inject(Router).navigate).not.toHaveBeenCalled();
     expect(spectator.inject(DialogService).closeAllDialogs).not.toHaveBeenCalled();
+  });
+
+  it('tears down open form side panels on navigation', () => {
+    routerEvents$.next(new NavigationEnd(1, '/dashboard', '/dashboard'));
+
+    expect(spectator.inject(FormSidePanelService).closeAll).toHaveBeenCalled();
   });
 });

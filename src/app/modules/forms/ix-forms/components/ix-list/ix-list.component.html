@@ -9,16 +9,15 @@
     }
 
     @if (canAdd()) {
-      <button
-        mat-button
-        type="button"
+      <tn-button
         class="add-btn"
-        [ixTest]="['add-item', label()]"
-        [attr.aria-label]="'Add {item}' | translate: { item: label() }"
-        (click)="addItem()"
-      >
-        {{ 'Add' | translate }}
-      </button>
+        variant="filled"
+        color="default"
+        [testId]="['add-item', label()]"
+        [ariaLabel]="'Add {item}' | translate: { item: label() }"
+        [label]="'Add' | translate"
+        (onClick)="addItem()"
+      ></tn-button>
     }
   </div>
   @if (formArray()) {

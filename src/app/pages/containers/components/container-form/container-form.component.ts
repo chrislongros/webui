@@ -1,5 +1,6 @@
+import { AsyncPipe } from '@angular/common';
 import {
-  ChangeDetectionStrategy, Component, computed, DestroyRef, OnInit, signal, inject,
+  ChangeDetectionStrategy, Component, computed, DestroyRef, OnInit, signal, inject, input,
 } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import {
@@ -10,11 +11,19 @@ import {
   ReactiveFormsModule,
   Validators,
 } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatDialog } from '@angular/material/dialog';
 import { Router } from '@angular/router';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
+import {
+  InputType,
+  TnBannerComponent,
+  TnButtonComponent,
+  TnCheckboxComponent,
+  TnDialog,
+  TnFormFieldComponent,
+  TnFormSectionComponent,
+  TnInputComponent,
+  TnSelectComponent,
+} from '@truenas/ui-components';
 import {
   filter, map, Observable, of, take, tap,
 } from 'rxjs';
@@ -41,23 +50,18 @@ import {
   UpdateContainer,
 } from 'app/interfaces/container.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
-import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
-import { IxCheckboxComponent } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.component';
-import { IxFieldsetComponent } from 'app/modules/forms/ix-forms/components/ix-fieldset/ix-fieldset.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
 import { IxListItemComponent } from 'app/modules/forms/ix-forms/components/ix-list/ix-list-item/ix-list-item.component';
 import { IxListComponent } from 'app/modules/forms/ix-forms/components/ix-list/ix-list.component';
-import { IxSelectComponent } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.component';
-import { WarningComponent } from 'app/modules/forms/ix-forms/components/warning/warning.component';
 import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
 import { IxFormatterService } from 'app/modules/forms/ix-forms/services/ix-formatter.service';
 import {
   forbiddenAsyncValues,
 } from 'app/modules/forms/ix-forms/validators/forbidden-values-validation/forbidden-values-validation';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import {
+  advancedModeFooterAction, SidePanelFooterAction,
+} from 'app/modules/slide-ins/form-side-panel/side-panel-footer-actions';
+import { SidePanelForm } from 'app/modules/slide-ins/side-panel-form.directive';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   SelectImageDialog,
@@ -65,6 +69,7 @@ import {
 } from 'app/pages/containers/components/container-wizard/select-image-dialog/select-image-dialog.component';
 import { ContainerConfigStore } from 'app/pages/containers/stores/container-config.store';
 import { ContainersStore } from 'app/pages/containers/stores/containers.store';
+import { isContainerActive } from 'app/pages/containers/utils/container-status.utils';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
 @Component({
@@ -73,45 +78,43 @@ import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
   styleUrls: ['./container-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    IxCheckboxComponent,
-    IxFieldsetComponent,
-    IxInputComponent,
+    AsyncPipe,
     IxListComponent,
     IxListItemComponent,
-    IxSelectComponent,
-    MatButton,
-    MatCard,
-    MatCardContent,
-    ModalHeaderComponent,
     ReactiveFormsModule,
-    TestDirective,
+    TnBannerComponent,
+    TnButtonComponent,
+    TnCheckboxComponent,
+    TnFormFieldComponent,
+    TnFormSectionComponent,
+    TnInputComponent,
+    TnSelectComponent,
     TranslateModule,
-    FormActionsComponent,
-    WarningComponent,
   ],
   providers: [ContainerConfigStore],
   host: {
     '(window:beforeunload)': 'onBeforeUnload($event)',
   },
 })
-export class ContainerFormComponent implements OnInit {
+export class ContainerFormComponent extends SidePanelForm implements OnInit {
   private api = inject(ApiService);
   private formBuilder = inject(NonNullableFormBuilder);
-  private matDialog = inject(MatDialog);
+  private tnDialog = inject(TnDialog);
   private formErrorHandler = inject(FormErrorHandlerService);
   private translate = inject(TranslateService);
   private snackbar = inject(SnackbarService);
   private dialogService = inject(DialogService);
   protected formatter = inject(IxFormatterService);
   private errorHandler = inject(ErrorHandlerService);
-  slideInRef = inject<SlideInRef<Container | undefined, boolean>>(SlideInRef);
   private containersStore = inject(ContainersStore, { optional: true });
   private router = inject(Router);
   private containerConfigStore = inject(ContainerConfigStore);
   private destroyRef = inject(DestroyRef);
 
+  protected readonly InputType = InputType;
   protected readonly isLoading = signal<boolean>(false);
-  protected readonly requiredRoles = [Role.ContainerWrite];
+  /** Public because the `<tn-side-panel>` host reads it to gate its footer Save. */
+  readonly requiredRoles = [Role.ContainerWrite];
 
   protected readonly slashRootNode = [slashRootNode];
 
@@ -131,25 +134,47 @@ export class ContainerFormComponent implements OnInit {
       .filter((name) => name !== this.editingContainer?.name)),
   );
 
-  protected isAdvancedMode = false;
+  /**
+   * A signal rather than a plain field because the toggle now lives in the `<tn-side-panel>`
+   * footer: the click handler runs in the host container, which never marks this OnPush form
+   * dirty, so a plain field would flip without the advanced sections re-rendering.
+   */
+  protected readonly isAdvancedMode = signal(false);
+
+  /** `testId` pins the `data-test` value this form's in-body toggle already ships with. */
+  private readonly advancedToggle = advancedModeFooterAction(this.isAdvancedMode, {
+    testId: 'advanced-options',
+  });
+
+  /** The Advanced/Basic toggle rendered in the `<tn-side-panel>` footer, before Save. */
+  get footerActions(): SidePanelFooterAction[] {
+    return this.advancedToggle();
+  }
 
   protected readonly isEditMode = signal<boolean>(false);
   protected editingContainer: Container | null = null;
-  protected readonly title = computed(() => {
-    if (this.isEditMode()) {
-      return this.translate.instant('Edit Container: {name}', {
-        name: this.editingContainer?.name || '',
-      });
-    }
-    return this.translate.instant('Add Container');
+
+  /** Middleware refuses to rename a container that is not stopped (RUNNING or SUSPENDED). */
+  protected readonly isRenameBlocked = signal<boolean>(false);
+
+  protected readonly nameTooltip = computed(() => {
+    return this.isRenameBlocked()
+      ? this.translate.instant(containersHelptext.renameRequiresStoppedTooltip)
+      : this.translate.instant(containersHelptext.nameTooltip);
   });
+
+  /**
+   * Container to edit, handed in by the `<tn-side-panel>` host (which has no data channel to
+   * carry data). Absent for Add. Both openers pass the panel title themselves, so this form
+   * derives none of its own chrome.
+   */
+  readonly editContainer = input<Container | undefined>(undefined);
 
   protected readonly hasPreferredPool = computed(() => {
     const config = this.containerConfigStore.config();
     return Boolean(config?.preferred_pool);
   });
 
-  // Observable for config changes (field initializer has injection context)
   private config$ = toObservable(this.containerConfigStore.config);
 
   poolOptions$ = this.api.call('container.pool_choices').pipe(
@@ -191,11 +216,9 @@ export class ContainerFormComponent implements OnInit {
     }>>([]),
   });
 
-  private hasSetupValidators = false;
+  readonly canSubmit = this.trackCanSubmit(this.isLoading);
 
-  constructor() {
-    this.editingContainer = this.slideInRef.getData();
-  }
+  private hasSetupValidators = false;
 
   onBeforeUnload(event: BeforeUnloadEvent): void {
     if (this.form.dirty) {
@@ -204,10 +227,10 @@ export class ContainerFormComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    // Initialize config store to load preferred pool settings
+    this.editingContainer = this.editContainer() ?? null;
+
     this.containerConfigStore.initialize();
 
-    // Setup form validators when config is loaded (for creation mode only)
     this.config$.pipe(
       filter((config) => config !== null && !this.isEditMode() && !this.hasSetupValidators),
       take(1),
@@ -223,7 +246,6 @@ export class ContainerFormComponent implements OnInit {
       this.setupForCreation();
     }
 
-    // Handle pool validation based on use_preferred_pool checkbox
     this.form.controls.use_preferred_pool.valueChanges.pipe(
       takeUntilDestroyed(this.destroyRef),
     ).subscribe((usePreferredPool) => {
@@ -252,10 +274,6 @@ export class ContainerFormComponent implements OnInit {
       }
       this.form.controls.idmap_slice.updateValueAndValidity();
     });
-
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(this.form.dirty);
-    });
   }
 
   private setupForCreation(): void {
@@ -282,7 +300,6 @@ export class ContainerFormComponent implements OnInit {
   }
 
   private setupValidatorsForCreation(): void {
-    // Set pool validators: required only if no preferred pool is set
     if (this.hasPreferredPool()) {
       this.form.controls.pool.clearValidators();
     } else {
@@ -311,12 +328,24 @@ export class ContainerFormComponent implements OnInit {
       },
       error: () => {
         this.isLoading.set(false);
-        this.slideInRef.close({ response: undefined });
+        this.close(false);
       },
     });
   }
 
   private populateFormForEdit(container: Container): void {
+    // Middleware refuses to rename a container that is not stopped - since 26.0 that
+    // covers SUSPENDED as well as RUNNING - so don't offer a rename it would reject.
+    // `getRawValue()` still reports the disabled control, so the payload diff is unaffected.
+    const isRenameBlocked = isContainerActive(container);
+    this.isRenameBlocked.set(isRenameBlocked);
+
+    if (isRenameBlocked) {
+      this.form.controls.name.disable();
+    } else {
+      this.form.controls.name.enable();
+    }
+
     this.form.patchValue({
       name: container.name,
       description: container.description || '',
@@ -339,7 +368,7 @@ export class ContainerFormComponent implements OnInit {
   }
 
   protected onBrowseCatalogImages(): void {
-    this.matDialog
+    this.tnDialog
       .open(SelectImageDialog, {
         minWidth: '90vw',
         data: {
@@ -347,7 +376,7 @@ export class ContainerFormComponent implements OnInit {
           type: ContainerType.Container,
         },
       })
-      .afterClosed()
+      .closed
       .pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef))
       .subscribe((image: ContainerImageWithId) => {
         this.form.controls.image.setValue(image.id);
@@ -370,7 +399,7 @@ export class ContainerFormComponent implements OnInit {
     this.form.controls.disks.removeAt(index);
   }
 
-  protected submit(): void {
+  protected onSubmit(): void {
     this.isLoading.set(true);
 
     if (this.isEditMode()) {
@@ -379,9 +408,7 @@ export class ContainerFormComponent implements OnInit {
           this.isLoading.set(false);
           this.form.markAsPristine();
           this.snackbar.success(this.translate.instant('Container updated'));
-
-          this.slideInRef.close({ response: true });
-
+          this.close(true);
           if (this.containersStore && updatedInstance) {
             this.containersStore.containerUpdated(updatedInstance);
           }
@@ -397,7 +424,7 @@ export class ContainerFormComponent implements OnInit {
           this.isLoading.set(false);
           this.form.markAsPristine();
           this.snackbar.success(this.translate.instant('Container created'));
-          this.slideInRef.close({ response: true });
+          this.close(true);
           this.containersStore?.reload();
           if (container?.id) {
             this.router.navigate(['/containers', 'view', container.id]);
@@ -522,47 +549,18 @@ export class ContainerFormComponent implements OnInit {
     return payload;
   }
 
-  /**
-   * Parses container image string into name and version components.
-   *
-   * Container images follow a colon-separated format with varying structures:
-   *
-   * 1. Full format (5+ parts): "name:major:arch:variant:version_timestamp:time"
-   *    Example: "almalinux:10:amd64:default:20250924_23:08"
-   *    - name: "almalinux:10:amd64:default"
-   *    - version: "20250924_23:08"
-   *
-   * 2. Simple format (2-4 parts): "name:version" or "name:tag:version"
-   *    Example: "ubuntu:22.04"
-   *    - name: "ubuntu"
-   *    - version: "22.04"
-   *
-   * 3. No version (1 part): "name"
-   *    Example: "alpine"
-   *    - name: "alpine"
-   *    - version: ""
-   *
-   * @param imageString The full image identifier string from the API
-   * @returns Object containing separated name and version strings
-   */
   private parseImageField(imageString: string): { name: string; version: string } {
-    // For container images like "almalinux:10:amd64:default:20250924_23:08"
-    // The base name format is typically "name:major:arch:variant"
-    // So we split and take the first 4 parts as name, everything after as version
     const parts = imageString.split(':');
     if (parts.length >= 5) {
-      // Container image format: name:major:arch:variant:version_part1:version_part2...
-      const name = parts.slice(0, 4).join(':'); // "almalinux:10:amd64:default"
-      const version = parts.slice(4).join(':'); // "20250924_23:08"
+      const name = parts.slice(0, 4).join(':');
+      const version = parts.slice(4).join(':');
       return { name, version };
     }
     if (parts.length >= 2) {
-      // Fallback: last part is version, everything else is name
       const version = parts[parts.length - 1];
       const name = parts.slice(0, -1).join(':');
       return { name, version };
     }
-    // Fallback if no colon found - shouldn't happen with our current data
     return { name: imageString, version: '' };
   }
 
@@ -589,6 +587,4 @@ export class ContainerFormComponent implements OnInit {
       return env;
     }, {});
   }
-
-  protected readonly containersHelptext = containersHelptext;
 }

@@ -1,22 +1,26 @@
+import { HarnessLoader } from '@angular/cdk/testing';
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { createComponentFactory, Spectator, mockProvider } from '@ngneat/spectator/jest';
-import { MockComponent } from 'ng-mocks';
 import { MiB } from 'app/constants/bytes.constant';
 import { mockApi, mockCall } from 'app/core/testing/utils/mock-api.utils';
+import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { NvmeOfNamespaceType } from 'app/enums/nvme-of.enum';
 import { NvmeOfNamespace } from 'app/interfaces/nvme-of.interface';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { ixFormTestingProviders } from 'app/modules/forms/ix-forms/testing/ix-form-testing.helpers';
+import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
-  BaseNamespaceFormComponent,
-} from 'app/pages/sharing/nvme-of/namespaces/base-namespace-form/base-namespace-form.component';
-import { NamespaceChanges } from 'app/pages/sharing/nvme-of/namespaces/base-namespace-form/namespace-changes.interface';
+  mockExplorerCreateZvol, selectNamespaceType,
+} from 'app/pages/sharing/nvme-of/namespaces/base-namespace-form/testing/namespace-form.testing';
 import {
-  NamespaceFormComponent, NamespaceFormParams,
+  NamespaceFormComponent,
 } from 'app/pages/sharing/nvme-of/subsystem-details/subsystem-namespaces-card/namespace-form/namespace-form.component';
+import { FilesystemService } from 'app/services/filesystem.service';
 
 describe('NamespaceFormComponent', () => {
   let spectator: Spectator<NamespaceFormComponent>;
+  let loader: HarnessLoader;
 
   const existingNamespace = {
     id: 2,
@@ -25,93 +29,106 @@ describe('NamespaceFormComponent', () => {
     filesize: 100 * MiB,
   } as NvmeOfNamespace;
 
-  const slideInGetData = jest.fn(() => ({
-    subsystemId: 42,
-  } as NamespaceFormParams));
-
   const createComponent = createComponentFactory({
     component: NamespaceFormComponent,
-    imports: [
-      MockComponent(BaseNamespaceFormComponent),
-    ],
+    overrideComponents: [mockExplorerCreateZvol()],
     providers: [
       mockApi([
         mockCall('nvmet.namespace.create'),
         mockCall('nvmet.namespace.update'),
       ]),
-      mockProvider(SnackbarService),
-      mockProvider(SlideInRef, {
-        getData: slideInGetData,
-        close: jest.fn(),
-        requireConfirmationWhen: jest.fn(),
-      }),
+      mockAuth(),
+      ...ixFormTestingProviders(),
+      mockProvider(FilesystemService),
     ],
-  });
-
-  beforeEach(() => {
-    spectator = createComponent();
   });
 
   describe('creating a namespace', () => {
     beforeEach(() => {
-      slideInGetData.mockReturnValue({
-        subsystemId: 42,
+      spectator = createComponent({
+        props: {
+          namespaceData: { subsystemId: 42 },
+        },
       });
-      spectator = createComponent();
+      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     });
 
-    it('creates a namespace for a subsystem', () => {
-      const newNamespaceData: NamespaceChanges = {
-        device_path: '/mnt/tank/new-file',
-        device_type: NvmeOfNamespaceType.File,
-        filesize: 200 * MiB,
-      };
+    it('creates a namespace for a subsystem and signals success through `closed`', async () => {
+      const closedSpy = jest.fn();
+      spectator.component.closed.subscribe(closedSpy);
 
-      const baseFormComponent = spectator.query(BaseNamespaceFormComponent);
-      baseFormComponent.submitted.emit(newNamespaceData);
-
-      expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('nvmet.namespace.create', [{
-        ...newNamespaceData,
-        subsys_id: 42,
-      }]);
-
-      expect(spectator.inject(SlideInRef).close).toHaveBeenCalledWith({
-        response: newNamespaceData,
+      await selectNamespaceType(loader, 'Existing File');
+      const form = await loader.getHarness(IxFormHarness);
+      await form.fillForm({
+        'Path To File': '/mnt/tank/new-file',
       });
 
-      expect(spectator.inject(SnackbarService).success).toHaveBeenCalled();
+      spectator.component.submit();
+
+      expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('nvmet.namespace.create', [{
+        device_path: '/mnt/tank/new-file',
+        device_type: NvmeOfNamespaceType.File,
+        filesize: undefined,
+        subsys_id: 42,
+      }]);
+      // The opener reloads from the store, so `closed` only has to signal success.
+      expect(closedSpy).toHaveBeenCalledWith(true);
+      expect(spectator.inject(SnackbarService).success).toHaveBeenCalledWith('Namespace created.');
+    });
+
+    it('keeps Save disabled until a device path is chosen', async () => {
+      expect(spectator.component.canSubmit()).toBe(false);
+
+      await selectNamespaceType(loader, 'Existing File');
+      const form = await loader.getHarness(IxFormHarness);
+      await form.fillForm({
+        'Path To File': '/mnt/tank/new-file',
+      });
+
+      expect(spectator.component.canSubmit()).toBe(true);
     });
   });
 
   describe('editing a namespace', () => {
     beforeEach(() => {
-      slideInGetData.mockReturnValue({
-        namespace: existingNamespace,
-        subsystemId: 42,
+      spectator = createComponent({
+        props: {
+          namespaceData: {
+            namespace: existingNamespace,
+            subsystemId: 42,
+          },
+        },
       });
-      spectator = createComponent();
+      loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     });
 
-    it('edits an existing namespace', () => {
-      const updatedNamespaceData: NamespaceChanges = {
-        device_path: '/mnt/tank/updated-file',
-        device_type: NvmeOfNamespaceType.File,
-        filesize: 200 * MiB,
-      };
+    it('prefills from the existing namespace', async () => {
+      const form = await loader.getHarness(IxFormHarness);
 
-      const baseFormComponent = spectator.query(BaseNamespaceFormComponent);
-      baseFormComponent.submitted.emit(updatedNamespaceData);
+      expect(await form.getValues()).toEqual({
+        'Path To File': '/mnt/tank/test-file',
+      });
+    });
 
-      expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('nvmet.namespace.update', [2, {
-        ...updatedNamespaceData,
-        subsys_id: 42,
-      }]);
+    it('updates an existing namespace and signals success through `closed`', async () => {
+      const closedSpy = jest.fn();
+      spectator.component.closed.subscribe(closedSpy);
 
-      expect(spectator.inject(SlideInRef).close).toHaveBeenCalledWith({
-        response: updatedNamespaceData,
+      const form = await loader.getHarness(IxFormHarness);
+      await form.fillForm({
+        'Path To File': '/mnt/tank/updated-file',
       });
 
-      expect(spectator.inject(SnackbarService).success).toHaveBeenCalled();
+      spectator.component.submit();
+
+      expect(spectator.inject(ApiService).call).toHaveBeenCalledWith('nvmet.namespace.update', [2, {
+        device_path: '/mnt/tank/updated-file',
+        device_type: NvmeOfNamespaceType.File,
+        filesize: undefined,
+        subsys_id: 42,
+      }]);
+      expect(closedSpy).toHaveBeenCalledWith(true);
+      expect(spectator.inject(SnackbarService).success).toHaveBeenCalledWith('Namespace updated.');
     });
   });
 });

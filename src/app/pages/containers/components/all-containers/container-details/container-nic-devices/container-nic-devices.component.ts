@@ -1,11 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { MatCard, MatCardContent, MatCardHeader } from '@angular/material/card';
-import { MatTooltipModule } from '@angular/material/tooltip';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
+import {
+  TnCardComponent, TnCardFooterActionsDirective, TnTooltipDirective,
+} from '@truenas/ui-components';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { catchError, of } from 'rxjs';
-import { ContainerDeviceType, ContainerStatus } from 'app/enums/container.enum';
+import { ContainerDeviceType } from 'app/enums/container.enum';
+import { containersHelptext } from 'app/helptext/containers/containers';
 import { ContainerDevice, ContainerNicDevice } from 'app/interfaces/container.interface';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { AddNicMenuComponent } from 'app/pages/containers/components/all-containers/container-details/container-nic-devices/add-nic-menu/add-nic-menu.component';
@@ -15,6 +17,7 @@ import {
 import { getDeviceDescription } from 'app/pages/containers/components/common/utils/get-device-description.utils';
 import { ContainerDevicesStore } from 'app/pages/containers/stores/container-devices.store';
 import { ContainersStore } from 'app/pages/containers/stores/containers.store';
+import { isContainerActive } from 'app/pages/containers/utils/container-status.utils';
 
 @Component({
   selector: 'ix-container-nic-devices',
@@ -22,11 +25,10 @@ import { ContainersStore } from 'app/pages/containers/stores/containers.store';
   styleUrls: ['./container-nic-devices.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    MatCardHeader,
+    TnCardComponent,
+    TnCardFooterActionsDirective,
     TranslateModule,
-    MatTooltipModule,
-    MatCardContent,
+    TnTooltipDirective,
     NgxSkeletonLoaderModule,
     DeviceActionsMenuComponent,
     AddNicMenuComponent,
@@ -48,9 +50,12 @@ export class ContainerNicDevicesComponent {
 
   protected readonly isLoadingDevices = this.devicesStore.isLoading;
 
-  protected readonly isContainerRunning = computed(() => {
-    const container = this.containersStore.selectedContainer();
-    return container?.status.state === ContainerStatus.Running;
+  protected readonly helptext = containersHelptext;
+
+  // Middleware refuses device operations on any container that is not stopped, which since
+  // 26.0 includes SUSPENDED - not just RUNNING.
+  protected readonly isContainerActive = computed(() => {
+    return isContainerActive(this.containersStore.selectedContainer());
   });
 
   protected readonly shownDevices = computed<ContainerNicDevice[]>(() => {

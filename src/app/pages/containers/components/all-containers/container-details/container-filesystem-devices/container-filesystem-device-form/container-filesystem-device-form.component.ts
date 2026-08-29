@@ -1,40 +1,32 @@
 import {
-  ChangeDetectionStrategy, Component, computed, OnInit, signal, inject, DestroyRef,
+  ChangeDetectionStrategy, Component, OnInit, signal, inject, DestroyRef, input,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   FormBuilder, ReactiveFormsModule, Validators,
 } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { Observable, of } from 'rxjs';
+import {
+  TnFormFieldComponent, TnFormSectionComponent, TnInputComponent,
+} from '@truenas/ui-components';
+import { Observable } from 'rxjs';
 import { ContainerDeviceType } from 'app/enums/container.enum';
-import { containersHelptext } from 'app/helptext/containers/containers';
+import { Role } from 'app/enums/role.enum';
 import {
   Container,
   ContainerFilesystemDevice,
 } from 'app/interfaces/container.interface';
-import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
+import { ExplorerCreateDatasetComponent } from 'app/modules/forms/ix-forms/components/ix-explorer/explorer-create-dataset/explorer-create-dataset.component';
 import { IxExplorerComponent } from 'app/modules/forms/ix-forms/components/ix-explorer/ix-explorer.component';
-import { IxFieldsetComponent } from 'app/modules/forms/ix-forms/components/ix-fieldset/ix-fieldset.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
 import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
+import { SidePanelForm } from 'app/modules/slide-ins/side-panel-form.directive';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   containerPathValidator,
   poolPathValidator,
 } from 'app/pages/containers/utils/storage-device-validators';
 import { FilesystemService } from 'app/services/filesystem.service';
-
-interface ContainerFilesystemDeviceFormOptions {
-  container: Container;
-  disk: ContainerFilesystemDevice | undefined;
-}
 
 @Component({
   selector: 'ix-container-filesystem-device-form',
@@ -43,19 +35,15 @@ interface ContainerFilesystemDeviceFormOptions {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     IxExplorerComponent,
-    IxInputComponent,
+    ExplorerCreateDatasetComponent,
+    TnInputComponent,
     ReactiveFormsModule,
     TranslateModule,
-    MatCard,
-    MatCardContent,
-    ModalHeaderComponent,
-    IxFieldsetComponent,
-    FormActionsComponent,
-    MatButton,
-    TestDirective,
+    TnFormSectionComponent,
+    TnFormFieldComponent,
   ],
 })
-export class ContainerFilesystemDeviceFormComponent implements OnInit {
+export class ContainerFilesystemDeviceFormComponent extends SidePanelForm implements OnInit {
   private destroyRef = inject(DestroyRef);
   private formBuilder = inject(FormBuilder);
   private errorHandler = inject(FormErrorHandlerService);
@@ -63,11 +51,16 @@ export class ContainerFilesystemDeviceFormComponent implements OnInit {
   private translate = inject(TranslateService);
   private snackbar = inject(SnackbarService);
   private filesystem = inject(FilesystemService);
-  slideInRef = inject<SlideInRef<ContainerFilesystemDeviceFormOptions, boolean>>(SlideInRef);
 
-  private existingDisk = signal<ContainerFilesystemDevice | null>(null);
+  /** The device being edited; absent when adding. Supplied by the `<tn-side-panel>` host. */
+  readonly disk = input<ContainerFilesystemDevice | undefined>(undefined);
+  /** The container the device belongs to. Supplied by the `<tn-side-panel>` host. */
+  readonly container = input<Container | undefined>(undefined);
 
-  protected readonly isLoading = signal(false);
+  /** Public because the `<tn-side-panel>` host reads it to gate its footer Save. */
+  readonly requiredRoles = [Role.ContainerDeviceWrite];
+
+  protected readonly isFormLoading = signal(false);
 
   readonly fileProvider = this.filesystem.getFilesystemNodeProvider();
 
@@ -76,28 +69,12 @@ export class ContainerFilesystemDeviceFormComponent implements OnInit {
     target: ['', [Validators.required, containerPathValidator()]],
   });
 
-  protected isNew = computed(() => !this.existingDisk());
-
-  protected title = computed(() => {
-    return this.isNew()
-      ? this.translate.instant('Add Filesystem Device')
-      : this.translate.instant('Edit Filesystem Device');
-  });
-
-  protected get container(): Container {
-    return this.slideInRef.getData().container;
-  }
-
-  constructor() {
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(this.form.dirty);
-    });
-  }
+  readonly canSubmit = this.trackCanSubmit(this.isFormLoading);
 
   ngOnInit(): void {
-    const disk = this.slideInRef.getData()?.disk;
+    const disk = this.disk();
+
     if (disk) {
-      this.existingDisk.set(disk);
       this.form.patchValue({
         source: disk.source || '',
         target: disk.target || '',
@@ -106,20 +83,18 @@ export class ContainerFilesystemDeviceFormComponent implements OnInit {
   }
 
   protected onSubmit(): void {
-    this.isLoading.set(true);
+    this.isFormLoading.set(true);
     this.prepareRequest()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         complete: () => {
           this.snackbar.success(this.translate.instant('Filesystem Device was saved'));
-          this.slideInRef.close({
-            response: true,
-          });
-          this.isLoading.set(false);
+          this.isFormLoading.set(false);
+          this.close(true);
         },
         error: (error: unknown) => {
           this.errorHandler.handleValidationErrors(error, this.form);
-          this.isLoading.set(false);
+          this.isFormLoading.set(false);
         },
       });
   }
@@ -133,16 +108,14 @@ export class ContainerFilesystemDeviceFormComponent implements OnInit {
       target: formValue.target,
     };
 
-    const existingDisk = this.existingDisk();
+    const existingDisk = this.disk();
     return existingDisk
       ? this.api.call('container.device.update', [existingDisk.id, {
           attributes: payload,
         }])
       : this.api.call('container.device.create', [{
-          container: this.container.id,
+          container: this.container().id,
           attributes: payload,
         }]);
   }
-
-  protected readonly containersHelptext = containersHelptext;
 }

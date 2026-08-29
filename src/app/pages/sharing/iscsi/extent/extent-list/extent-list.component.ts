@@ -1,13 +1,15 @@
-import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnInit, inject, signal, DestroyRef } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatDialog } from '@angular/material/dialog';
-import { MatToolbarRow } from '@angular/material/toolbar';
+import {
+  ChangeDetectionStrategy, Component, OnInit, computed, inject, signal, DestroyRef,
+} from '@angular/core';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { tnIconMarker } from '@truenas/ui-components';
-import { filter, tap } from 'rxjs';
+import {
+  tnIconMarker, TnButtonComponent, TnCardComponent, TnCardHeaderActionsDirective,
+  TnCellDefDirective, TnDialog, TnHeaderCellDefDirective, TnTableColumnDirective, TnTableComponent,
+  TnTablePagerComponent, TnTestIdDirective, TnTooltipDirective,
+  type TnSortEvent,
+} from '@truenas/ui-components';
+import { filter } from 'rxjs';
 import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
 import { IscsiExtentType } from 'app/enums/iscsi.enum';
@@ -15,20 +17,16 @@ import { Role } from 'app/enums/role.enum';
 import { IscsiExtent } from 'app/interfaces/iscsi.interface';
 import { EmptyService } from 'app/modules/empty/empty.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { AsyncDataProvider } from 'app/modules/ix-table/classes/async-data-provider/async-data-provider';
-import { IxTableComponent } from 'app/modules/ix-table/components/ix-table/ix-table.component';
-import { actionsWithMenuColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-actions-with-menu/ix-cell-actions-with-menu.component';
-import { textColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-text/ix-cell-text.component';
-import { yesNoColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-yes-no/ix-cell-yes-no.component';
-import { IxTableBodyComponent } from 'app/modules/ix-table/components/ix-table-body/ix-table-body.component';
-import { IxTableColumnsSelectorComponent } from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import { IxTableHeadComponent } from 'app/modules/ix-table/components/ix-table-head/ix-table-head.component';
-import { IxTablePagerComponent } from 'app/modules/ix-table/components/ix-table-pager/ix-table-pager.component';
-import { IxTableEmptyDirective } from 'app/modules/ix-table/directives/ix-table-empty.directive';
-import { createTable } from 'app/modules/ix-table/utils';
-import { FakeProgressBarComponent } from 'app/modules/loader/components/fake-progress-bar/fake-progress-bar.component';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { YesNoPipe } from 'app/modules/pipes/yes-no/yes-no.pipe';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
+import { AsyncDataProvider } from 'app/modules/tn-table/classes/async-data-provider/async-data-provider';
+import { actionsColumn, column } from 'app/modules/tn-table/column-configs';
+import { TableColumnPickerComponent } from 'app/modules/tn-table/components/table-column-picker/table-column-picker.component';
+import { IconActionConfig } from 'app/modules/tn-table/interfaces/icon-action-config.interface';
+import {
+  createTable, dataProviderLoading, dataProviderRows, mapTnSortToTableSort, toDisplayedColumns, toUniqueRowTag,
+} from 'app/modules/tn-table/utils';
+import { TableActionsCellComponent } from 'app/modules/tn-table-cells/actions-cell/table-actions-cell.component';
 import { ExtentFormComponent } from 'app/pages/sharing/iscsi/extent/extent-form/extent-form.component';
 import {
   DeleteExtentDialog,
@@ -39,33 +37,33 @@ import { IscsiService } from 'app/services/iscsi.service';
 @Component({
   selector: 'ix-iscsi-extent-list',
   templateUrl: './extent-list.component.html',
+  styleUrls: ['./extent-list.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    FakeProgressBarComponent,
-    MatToolbarRow,
+    TnCardComponent,
+    TnCardHeaderActionsDirective,
     BasicSearchComponent,
-    IxTableColumnsSelectorComponent,
+    TableColumnPickerComponent,
     RequiresRolesDirective,
-    MatButton,
-    TestDirective,
-    MatCardContent,
-    IxTableComponent,
-    IxTableEmptyDirective,
-    IxTableHeadComponent,
-    IxTableBodyComponent,
-    IxTablePagerComponent,
-    TranslateModule,
-    AsyncPipe,
+    TnButtonComponent,
+    TnTestIdDirective,
     UiSearchDirective,
+    TnTableComponent,
+    TnTableColumnDirective,
+    TnHeaderCellDefDirective,
+    TnCellDefDirective,
+    TableActionsCellComponent,
+    TnTablePagerComponent,
+    TnTooltipDirective,
+    TranslateModule,
+    YesNoPipe,
   ],
 })
 export class ExtentListComponent implements OnInit {
-  emptyService = inject(EmptyService);
-  private slideIn = inject(SlideIn);
+  protected emptyService = inject(EmptyService);
+  private formPanel = inject(FormSidePanelService);
   private translate = inject(TranslateService);
-  private matDialog = inject(MatDialog);
-  private cdr = inject(ChangeDetectorRef);
+  private tnDialog = inject(TnDialog);
   private iscsiService = inject(IscsiService);
   private destroyRef = inject(DestroyRef);
 
@@ -77,78 +75,84 @@ export class ExtentListComponent implements OnInit {
     Role.SharingWrite,
   ];
 
-  isLoading = false;
-  searchQuery = signal('');
-  dataProvider: AsyncDataProvider<IscsiExtent>;
+  protected readonly searchQuery = signal('');
+  protected readonly dataProvider = new AsyncDataProvider<IscsiExtent>(this.iscsiService.getExtents());
+  protected readonly rows = dataProviderRows(this.dataProvider);
+  protected readonly isLoading = dataProviderLoading(this.dataProvider);
+  protected readonly emptyType = toSignal(this.dataProvider.emptyType$);
 
-  extents: IscsiExtent[] = [];
+  protected readonly actions: IconActionConfig<IscsiExtent>[] = [
+    {
+      iconName: tnIconMarker('pencil', 'mdi'),
+      tooltip: this.translate.instant('Edit'),
+      onClick: (extent) => {
+        this.openForm(extent);
+      },
+    },
+    {
+      iconName: tnIconMarker('delete', 'mdi'),
+      tooltip: this.translate.instant('Delete'),
+      onClick: (row) => this.showDeleteDialog(row),
+      requiredRoles: this.requiredRoles,
+    },
+  ];
 
-  columns = createTable<IscsiExtent>([
-    textColumn({
+  // Column model retained purely to drive <ix-table-column-picker>
+  // (visibility + saved prefs); tn-table renders cells from the template and
+  // derives its `displayedColumns` from these via `toDisplayedColumns`.
+  protected readonly columns = signal(createTable<IscsiExtent>([
+    column({
       title: this.translate.instant('Extent Name'),
       propertyName: 'name',
     }),
-    textColumn({
+    column({
       title: this.translate.instant('Device/File'),
       propertyName: 'path',
-      getValue: (extent) => {
-        return extent.type === IscsiExtentType.Disk ? extent.disk : extent.path;
-      },
     }),
-    textColumn({
+    column({
       title: this.translate.instant('Description'),
       propertyName: 'comment',
     }),
-    textColumn({
+    column({
       title: this.translate.instant('Serial'),
       propertyName: 'serial',
     }),
-    textColumn({
+    column({
       title: this.translate.instant('Product ID'),
       propertyName: 'product_id',
     }),
-    textColumn({
+    column({
       title: this.translate.instant('NAA'),
       propertyName: 'naa',
     }),
-    yesNoColumn({
+    column({
       title: this.translate.instant('Enabled'),
       propertyName: 'enabled',
     }),
-    actionsWithMenuColumn({
-      actions: [
-        {
-          iconName: tnIconMarker('pencil', 'mdi'),
-          tooltip: this.translate.instant('Edit'),
-          onClick: (extent) => {
-            this.slideIn.open(ExtentFormComponent, { wide: true, data: extent })
-              .onSuccess(() => this.refresh(), this.destroyRef);
-          },
-        },
-        {
-          iconName: tnIconMarker('delete', 'mdi'),
-          tooltip: this.translate.instant('Delete'),
-          onClick: (row) => this.showDeleteDialog(row),
-          requiredRoles: this.requiredRoles,
-        },
-      ],
-    }),
-  ], {
-    uniqueRowTag: (row) => 'iscsi-extent-' + row.name,
-    ariaLabels: (row) => [row.name, this.translate.instant('iSCSI Extent')],
-  });
+    actionsColumn(),
+  ]));
+
+  protected readonly displayedColumns = computed<string[]>(() => toDisplayedColumns(this.columns()));
+
+  protected readonly trackByExtentId = (_index: number, row: IscsiExtent): number => row.id;
+
+  protected uniqueRowTag(row: IscsiExtent): string {
+    return toUniqueRowTag('iscsi-extent-' + row.name);
+  }
+
+  protected ariaLabel(row: IscsiExtent): string {
+    return [row.name, this.translate.instant('iSCSI Extent')].join(' ');
+  }
+
+  protected devicePath(extent: IscsiExtent): string {
+    return extent.type === IscsiExtentType.Disk ? extent.disk : extent.path;
+  }
 
   ngOnInit(): void {
-    const extents$ = this.iscsiService.getExtents().pipe(
-      tap((extents) => this.extents = extents),
-      takeUntilDestroyed(this.destroyRef),
-    );
-
     this.iscsiService.listenForDataRefresh()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.dataProvider.load());
 
-    this.dataProvider = new AsyncDataProvider(extents$);
     this.refresh();
     this.dataProvider.emptyType$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.onListFiltered(this.searchQuery());
@@ -156,15 +160,30 @@ export class ExtentListComponent implements OnInit {
   }
 
   protected doAdd(): void {
-    this.slideIn.open(ExtentFormComponent, { wide: true })
-      .onSuccess(() => this.refresh(), this.destroyRef);
+    this.openForm();
+  }
+
+  protected openForm(extent?: IscsiExtent): void {
+    this.formPanel.open(ExtentFormComponent, {
+      title: extent
+        ? this.translate.instant('Edit Extent')
+        : this.translate.instant('Add Extent'),
+      wide: true,
+      inputs: { extentData: extent },
+    }).onSuccess(() => this.refresh(), this.destroyRef);
   }
 
   private showDeleteDialog(extent: IscsiExtent): void {
-    this.matDialog.open(DeleteExtentDialog, { data: extent })
-      .afterClosed()
+    this.tnDialog.open(DeleteExtentDialog, { data: extent })
+      .closed
       .pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.refresh());
+  }
+
+  protected onSortChange(event: TnSortEvent): void {
+    this.dataProvider.setSorting(
+      mapTnSortToTableSort<IscsiExtent>(event, this.displayedColumns(), { columns: this.columns() }),
+    );
   }
 
   protected onListFiltered(query: string): void {
@@ -172,10 +191,8 @@ export class ExtentListComponent implements OnInit {
     this.dataProvider.setFilter({ query, columnKeys: ['name'] });
   }
 
-  protected columnsChange(columns: typeof this.columns): void {
-    this.columns = [...columns];
-    this.cdr.detectChanges();
-    this.cdr.markForCheck();
+  protected onColumnsChange(columns: ReturnType<typeof this.columns>): void {
+    this.columns.set([...columns]);
   }
 
   private refresh(): void {

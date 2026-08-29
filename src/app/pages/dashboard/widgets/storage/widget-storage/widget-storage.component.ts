@@ -1,15 +1,15 @@
 import { PercentPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, input, inject } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { MatIconButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatGridList, MatGridTile } from '@angular/material/grid-list';
-import { MatTooltip } from '@angular/material/tooltip';
-import { RouterLink } from '@angular/router';
+import { RouterLink, Router } from '@angular/router';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent, TnTooltipDirective } from '@truenas/ui-components';
+import {
+  TnCardComponent, TnIconButtonComponent, TnIconComponent, TnTestIdDirective, TnTooltipDirective,
+} from '@truenas/ui-components';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
+import { getPoolCapacityLevel } from 'app/constants/pool-capacity.constant';
 import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
+import { PoolCapacityLevel } from 'app/enums/pool-capacity-level.enum';
 import { PoolScanFunction } from 'app/enums/pool-scan-function.enum';
 import { PoolScanState } from 'app/enums/pool-scan-state.enum';
 import { PoolStatus } from 'app/enums/pool-status.enum';
@@ -19,7 +19,6 @@ import { buildNormalizedFileSize } from 'app/helpers/file-size.utils';
 import { Pool, PoolScanUpdate } from 'app/interfaces/pool.interface';
 import { isTopologyDisk } from 'app/interfaces/storage.interface';
 import { FormatDateTimePipe } from 'app/modules/dates/pipes/format-date-time/format-datetime.pipe';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { WidgetStaleDataNoticeComponent } from 'app/pages/dashboard/components/widget-stale-data-notice/widget-stale-data-notice.component';
 import { WidgetResourcesService } from 'app/pages/dashboard/services/widget-resources.service';
 import { SlotSize } from 'app/pages/dashboard/types/widget.interface';
@@ -34,16 +33,12 @@ import {
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [FormatDateTimePipe, PercentPipe],
   imports: [
-    MatCard,
-    MatCardContent,
-    MatIconButton,
-    TestDirective,
-    MatTooltip,
+    TnCardComponent,
+    TnIconButtonComponent,
+    TnTestIdDirective,
     RouterLink,
     TnIconComponent,
     TnTooltipDirective,
-    MatGridList,
-    MatGridTile,
     RequiresRolesDirective,
     NgxSkeletonLoaderModule,
     TranslateModule,
@@ -51,6 +46,7 @@ import {
   ],
 })
 export class WidgetStorageComponent {
+  private router = inject(Router);
   private resources = inject(WidgetResourcesService);
   private translate = inject(TranslateService);
   private formatDateTimePipe = inject(FormatDateTimePipe);
@@ -152,7 +148,7 @@ export class WidgetStorageComponent {
       case PoolStatus.Offline:
       case PoolStatus.Degraded:
         level = StatusLevel.Warn;
-        icon = statusIcons.error;
+        icon = statusIcons.mdiAlert;
         break;
 
       case PoolStatus.Faulted:
@@ -174,17 +170,17 @@ export class WidgetStorageComponent {
   private getUsedSpaceItemInfo(pool: Pool): ItemInfo {
     const usedSpace = Number(this.poolStats()?.[pool.name]?.used);
     const totalSpace = Number(this.poolStats()?.[pool.name]?.total);
-    const usedSpacePercent = usedSpace / totalSpace;
+    const usedSpaceFraction = usedSpace / totalSpace;
     let level = StatusLevel.Safe;
     let icon = statusIcons.checkCircle;
-    let value = this.percentPipe.transform(usedSpacePercent, '1.2-2') || '?';
+    let value = this.percentPipe.transform(usedSpaceFraction, '1.2-2') || '?';
 
     if (!usedSpace) {
       return {
         label: this.translate.instant('Used Space'),
         value: this.translate.instant('Unknown'),
         level: StatusLevel.Warn,
-        icon: statusIcons.error,
+        icon: statusIcons.mdiAlert,
       };
     }
 
@@ -196,12 +192,17 @@ export class WidgetStorageComponent {
       });
     }
 
-    if (usedSpacePercent >= 90) {
-      level = StatusLevel.Error;
-      icon = statusIcons.error;
-    } else if (usedSpacePercent >= 80) {
-      level = StatusLevel.Warn;
-      icon = statusIcons.error;
+    switch (getPoolCapacityLevel(usedSpaceFraction * 100)) {
+      case PoolCapacityLevel.Critical:
+        level = StatusLevel.Error;
+        icon = statusIcons.error;
+        break;
+      case PoolCapacityLevel.Warning:
+        level = StatusLevel.Warn;
+        icon = statusIcons.mdiAlert;
+        break;
+      case PoolCapacityLevel.Safe:
+        break;
     }
 
     return {
@@ -214,7 +215,7 @@ export class WidgetStorageComponent {
 
   private getDiskWithErrorsItemInfo(pool: Pool): ItemInfo {
     let level = StatusLevel.Warn;
-    let icon = statusIcons.error;
+    let icon = statusIcons.mdiAlert;
     let unhealthyCount: number | null = null;
     let value: string = this.translate.instant('Unknown');
 
@@ -243,7 +244,7 @@ export class WidgetStorageComponent {
         icon = statusIcons.checkCircle;
       } else {
         level = StatusLevel.Warn;
-        icon = statusIcons.error;
+        icon = statusIcons.mdiAlert;
         unhealthyCount = unhealthy.length;
       }
 
@@ -294,7 +295,7 @@ export class WidgetStorageComponent {
       value = this.formatScanPercentage(scan);
     } else if (endTime && !isScanInProgress) {
       // case: scan is finished.
-      icon = isScanFinished ? statusIcons.checkCircle : statusIcons.error;
+      icon = isScanFinished ? statusIcons.checkCircle : statusIcons.mdiAlert;
       level = isScanFinished ? StatusLevel.Safe : StatusLevel.Warn;
       value = this.formatDateTimePipe.transform(endTime);
     } else {
@@ -328,5 +329,9 @@ export class WidgetStorageComponent {
     }
 
     return this.translate.instant('Unknown');
+  }
+
+  protected goToReports(): void {
+    this.router.navigate(['/reportsdashboard', 'disk']);
   }
 }

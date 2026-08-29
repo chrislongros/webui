@@ -1,58 +1,77 @@
-<ix-modal-header
-  [requiredRoles]="requiredRoles"
-  [title]="'Add Snapshot' | translate"
-  [loading]="isFormLoading()"
-></ix-modal-header>
-<mat-card>
-  <mat-card-content>
-    <form class="ix-form-container" [formGroup]="form" (submit)="onSubmit()">
-      <ix-fieldset>
-        <ix-select
-          formControlName="dataset"
-          [label]="helptext.datasetLabel | translate"
-          [options]="datasetOptions$"
-          [required]="true"
-        ></ix-select>
+<!-- Panel-hosted only: the title, Save and role gating live on the <tn-side-panel> host. -->
+<ix-form
+  [formGroup]="form"
+  [externalLoading]="isFormLoading()"
+  [extraDisabled]="isCheckingVms() || vmCheckFailed()"
+  [submitHandler]="handleSubmit"
+  (closed)="closed.emit($event)"
+>
+  <tn-form-section>
+    <!-- The lookup gates Save, so say so on the field it depends on rather than leaving the user
+         with a silently greyed-out Save. `hint` is ARIA-linked, so it's announced too. -->
+    <tn-form-field
+      [label]="helptext.datasetLabel | translate"
+      [required]="true"
+      [hint]="isCheckingVms() ? (helptext.checkingForVms | translate) : ''"
+      [errorMessages]="datasetErrorMessages"
+    >
+      <tn-select
+        formControlName="dataset"
+        [options]="(datasetOptions$ | async) ?? []"
+      ></tn-select>
+    </tn-form-field>
 
-        <ix-input
-          formControlName="name"
-          [label]="helptext.nameLabel | translate"
-          [tooltip]="helptext.nameTooltip | translate"
-        ></ix-input>
+    <!-- A failed lookup blocks Save, so the user needs a way out that isn't "disturb a field until
+         it re-runs" — the error above says why, this re-runs it. It survives the check it starts
+         (it must not vanish from under the focus of the user who just pressed it, and a disabled
+         button still announces the check running), and goes away on the next dataset change. -->
+    @if (canRetryVmCheck()) {
+      <tn-button
+        variant="outline"
+        testId="retry-vm-check"
+        [label]="helptext.retryVmCheck | translate"
+        [disabled]="isCheckingVms()"
+        (onClick)="retryVmCheck()"
+      ></tn-button>
+    }
 
-        <ix-select
-          formControlName="naming_schema"
-          [label]="helptext.namingSchemaLabel | translate"
-          [tooltip]="helptext.namingSchemaTooltip | translate"
-          [options]="namingSchemaOptions$"
-        ></ix-select>
+    <!-- The field's hint and error carry the same states, but they're announced through the dataset
+         select — a user standing on the retry button would hear nothing back. Mounted from the
+         start, and empty until a check has failed: a live region inserted together with its text
+         isn't reliably announced. -->
+    <div class="vm-check-status" role="status" aria-live="polite">{{ vmCheckStatus() }}</div>
 
-        <ix-checkbox
-          formControlName="recursive"
-          [label]="helptext.recursiveLabel | translate"
-          [tooltip]="helptext.recursiveTooltip | translate"
-        ></ix-checkbox>
+    <tn-form-field
+      [label]="helptext.nameLabel | translate"
+      [tooltip]="helptext.nameTooltip | translate"
+    >
+      <tn-input formControlName="name"></tn-input>
+    </tn-form-field>
 
-        @if (hasVmsInDataset) {
-          <ix-checkbox
-            formControlName="vmware_sync"
-            [label]="'VMWare Sync' | translate"
-          ></ix-checkbox>
-        }
-      </ix-fieldset>
+    <tn-form-field
+      [label]="helptext.namingSchemaLabel | translate"
+      [tooltip]="helptext.namingSchemaTooltip | translate"
+    >
+      <tn-select
+        formControlName="naming_schema"
+        [options]="(namingSchemaOptions$ | async) ?? []"
+      ></tn-select>
+    </tn-form-field>
 
-      <ix-form-actions>
-        <button
-          *ixRequiresRoles="requiredRoles"
-          mat-button
-          type="submit"
-          color="primary"
-          ixTest="save"
-          [disabled]="form.invalid || isFormLoading()"
-        >
-          {{ 'Save' | translate }}
-        </button>
-      </ix-form-actions>
-    </form>
-  </mat-card-content>
-</mat-card>
+    <tn-form-field [tooltip]="helptext.recursiveTooltip | translate">
+      <tn-checkbox
+        formControlName="recursive"
+        [label]="helptext.recursiveLabel | translate"
+      ></tn-checkbox>
+    </tn-form-field>
+
+    @if (hasVmsInDataset()) {
+      <tn-form-field>
+        <tn-checkbox
+          formControlName="vmware_sync"
+          [label]="'VMware Sync' | translate"
+        ></tn-checkbox>
+      </tn-form-field>
+    }
+  </tn-form-section>
+</ix-form>

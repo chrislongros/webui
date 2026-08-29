@@ -117,7 +117,6 @@ describe('PoolManagerComponent – creating dRAID pool', () => {
         }),
         mockCall('enclosure2.query', [] as Enclosure[]),
         mockCall('pool.query', []),
-        mockCall('pool.dataset.encryption_algorithm_choices', {}),
         mockJob('pool.create', fakeSuccessfulJob()),
       ]),
       mockProvider(PoolWizardNameValidationService, {
@@ -159,8 +158,10 @@ describe('PoolManagerComponent – creating dRAID pool', () => {
       'Data:': '1 × DRAID1 | 5 × 20 GiB (HDD)',
     });
 
-    const stepper = await wizard.getStepper();
-    await stepper.selectStep({ label: 'Review' });
+    const stepLabels = await (await wizard.getStepper()).getStepLabels();
+    expect(stepLabels).toContain('Spare (Optional)');
+
+    await wizard.goToStep('Review');
 
     expect(await (await wizard.getActiveStep()).getLabel()).toBe('Review');
 
@@ -182,5 +183,104 @@ describe('PoolManagerComponent – creating dRAID pool', () => {
         ],
       },
     }]);
+  });
+});
+
+describe('PoolManagerComponent – creating dRAID pool with a dedicated spare', () => {
+  let spectator: Spectator<PoolManagerComponent>;
+  let wizard: PoolManagerHarness;
+  const createComponent = createComponentFactory({
+    component: PoolManagerComponent,
+    imports: [
+      ...commonImports,
+    ],
+    providers: [
+      ...commonProviders,
+      mockApi([
+        mockCall('pool.validate_name', true),
+        mockCall('disk.details', {
+          used: [] as DetailsDisk[],
+          // Six identical disks: five form the dRAID data vdev, leaving one
+          // available to be added as a dedicated spare.
+          unused: [
+            { devname: 'sda0', size: 20 * GiB, type: DiskType.Hdd },
+            { devname: 'sda1', size: 20 * GiB, type: DiskType.Hdd },
+            { devname: 'sda2', size: 20 * GiB, type: DiskType.Hdd },
+            { devname: 'sda3', size: 20 * GiB, type: DiskType.Hdd },
+            { devname: 'sda4', size: 20 * GiB, type: DiskType.Hdd },
+            { devname: 'sda5', size: 20 * GiB, type: DiskType.Hdd },
+          ] as DetailsDisk[],
+        }),
+        mockCall('enclosure2.query', [] as Enclosure[]),
+        mockCall('pool.query', []),
+        mockJob('pool.create', fakeSuccessfulJob()),
+      ]),
+      mockProvider(PoolWizardNameValidationService, {
+        validatePoolName: () => of(null),
+      }),
+      mockAuth(),
+      mockProvider(Router),
+    ],
+  });
+
+  beforeEach(async () => {
+    spectator = createComponent();
+    wizard = await TestbedHarnessEnvironment.harnessForFixture(spectator.fixture, PoolManagerHarness);
+  });
+
+  it('allows adding a dedicated spare alongside a dRAID data vdev', async () => {
+    await wizard.fillStep({
+      Name: 'dRAIDWithSpare',
+    });
+
+    await wizard.clickNext();
+
+    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Data');
+
+    await wizard.fillStep({
+      Layout: 'dRAID1',
+    });
+
+    await wizard.fillStep({
+      'Disk Size': '20 GiB (HDD)',
+      'Data Devices': '2',
+      'Distributed Hot Spares': '1',
+      Children: '5',
+      'Number of VDEVs': '1',
+    });
+
+    const stepLabels = await (await wizard.getStepper()).getStepLabels();
+    expect(stepLabels).toContain('Spare (Optional)');
+
+    await wizard.goToStep('Spare (Optional)');
+    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Spare (Optional)');
+
+    await wizard.fillStep({
+      'Disk Size': '20 GiB (HDD)',
+      Width: '1',
+    });
+
+    await wizard.goToStep('Review');
+    expect(await (await wizard.getActiveStep()).getLabel()).toBe('Review');
+
+    await wizard.clickCreatePoolButton();
+
+    expect(spectator.inject(DialogService).jobDialog).toHaveBeenCalled();
+
+    const jobSpy = spectator.inject(ApiService).job as jest.Mock;
+    const createCall = jobSpy.mock.calls.find(([method]) => method === 'pool.create');
+    expect(createCall).toBeDefined();
+
+    const [, [payload]] = createCall as [string, [{ topology: Record<string, unknown> }]];
+    expect(payload.topology).toMatchObject({
+      data: [
+        expect.objectContaining({
+          type: CreateVdevLayout.Draid1,
+          draid_data_disks: 2,
+          draid_spare_disks: 1,
+        }),
+      ],
+    });
+    expect(payload.topology.spares).toHaveLength(1);
   });
 });

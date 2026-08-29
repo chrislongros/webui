@@ -1,12 +1,12 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
-import { MatStepperModule } from '@angular/material/stepper';
-import { MatStepperHarness, MatStepperNextHarness } from '@angular/material/stepper/testing';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import {
+  TnButtonHarness, TnCheckboxHarness, TnInputHarness, TnSelectHarness,
+} from '@truenas/ui-components';
 import { MockComponent } from 'ng-mocks';
-import { of } from 'rxjs';
+import { NEVER, of } from 'rxjs';
 import { GiB } from 'app/constants/bytes.constant';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
@@ -15,8 +15,6 @@ import {
 } from 'app/enums/vm.enum';
 import { VirtualMachine, VmPortWizardResult } from 'app/interfaces/virtual-machine.interface';
 import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
 import { SummaryComponent } from 'app/modules/summary/summary.component';
 import { ApiService } from 'app/modules/websocket/api.service';
@@ -42,20 +40,13 @@ import { IsolatedGpuValidatorService } from 'app/services/gpu/isolated-gpu-valid
 describe('VmWizardComponent', () => {
   let spectator: Spectator<VmWizardComponent>;
   let loader: HarnessLoader;
-  let form: IxFormHarness;
-  let nextButton: MatStepperNextHarness;
-
-  const slideInRef: SlideInRef<undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
+  let nextButton: TnButtonHarness;
+  let closedSpy: jest.Mock;
 
   const createComponent = createComponentFactory({
     component: VmWizardComponent,
     imports: [
       ReactiveFormsModule,
-      MatStepperModule,
     ],
     declarations: [
       OsStepComponent,
@@ -68,7 +59,6 @@ describe('VmWizardComponent', () => {
       MockComponent(SummaryComponent),
     ],
     providers: [
-      mockProvider(SlideIn),
       mockProvider(GpuService),
       mockProvider(VmGpuService),
       mockAuth(),
@@ -147,59 +137,73 @@ describe('VmWizardComponent', () => {
       mockProvider(VmGpuService, {
         updateVmGpus: jest.fn(() => of(undefined)),
       }),
-      mockProvider(SlideInRef, slideInRef),
     ],
   });
 
   beforeEach(async () => {
     spectator = createComponent();
+    closedSpy = jest.fn();
+    spectator.component.closed.subscribe(closedSpy);
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
     await updateStepHarnesses();
   });
 
   async function updateStepHarnesses(): Promise<void> {
-    const stepper = await loader.getHarness(MatStepperHarness);
-    const activeStep = (await stepper.getSteps({ selected: true }))[0];
+    // tn-stepper renders only the active step's content, so the single visible
+    // Next button and form controls resolve straight from the document-root loader.
+    nextButton = await loader.getHarness(TnButtonHarness.with({ label: 'Next' }));
+  }
 
-    form = await activeStep.getHarness(IxFormHarness);
-    nextButton = await activeStep.getHarness(MatStepperNextHarness.with({ text: 'Next' }));
+  async function setInput(controlName: string, value: string): Promise<void> {
+    const input = await loader.getHarness(TnInputHarness.with({ selector: `[formControlName="${controlName}"]` }));
+    await input.setValue(value);
+  }
+
+  async function setSelect(controlName: string, optionLabel: string): Promise<void> {
+    const select = await loader.getHarness(TnSelectHarness.with({ selector: `[formControlName="${controlName}"]` }));
+    await select.selectOption(optionLabel);
+  }
+
+  async function setCheckbox(controlName: string, checked: boolean): Promise<void> {
+    const checkbox = await loader.getHarness(
+      TnCheckboxHarness.with({ selector: `[formControlName="${controlName}"]` }),
+    );
+    if (checked) {
+      await checkbox.check();
+    } else {
+      await checkbox.uncheck();
+    }
   }
 
   async function fillWizard(): Promise<void> {
-    await form.fillForm({
-      'Guest Operating System': 'Windows',
-      Name: 'test',
-      'Enable Display (VNC)': true,
-      Password: '12345678',
-    });
+    await setSelect('os', 'Windows');
+    await setInput('name', 'test');
+    await setCheckbox('enable_vnc', true);
+    await setInput('vnc_password', '12345678');
     await nextButton.click();
     await updateStepHarnesses();
 
     await nextButton.click();
     await updateStepHarnesses();
 
-    await form.fillForm({
-      'Zvol Location': 'poolio',
-    });
+    await setSelect('datastore', 'poolio');
     await nextButton.click();
     await updateStepHarnesses();
 
-    await form.fillForm({
-      'Adapter Type': 'Intel e82585 (e1000)',
-      'Attach NIC': 'eno2',
-    });
+    await setSelect('nic_type', 'Intel e82585 (e1000)');
+    await setSelect('nic_attach', 'eno2');
     await nextButton.click();
     await updateStepHarnesses();
 
-    await form.fillForm({
+    // Installation media step still uses ix-explorer.
+    const mediaForm = await loader.getHarness(IxFormHarness);
+    await mediaForm.fillForm({
       'Optional: Choose installation media image': '/mnt/iso/FreeNAS-11.3-U3.iso',
     });
     await nextButton.click();
     await updateStepHarnesses();
 
-    await form.fillForm({
-      GPUs: ['GeForce GTX 1080 [0000:03:00.0]'],
-    });
+    await setSelect('gpus', 'GeForce GTX 1080 [0000:03:00.0]');
     await nextButton.click();
   }
 
@@ -207,10 +211,8 @@ describe('VmWizardComponent', () => {
     jest.spyOn(spectator.component.cpuAndMemoryStep().form, 'patchValue');
     jest.spyOn(spectator.component.diskStep().form, 'patchValue');
 
-    await form.fillForm({
-      'Guest Operating System': 'Windows',
-      Name: 'test',
-    });
+    await setSelect('os', 'Windows');
+    await setInput('name', 'test');
 
     expect(spectator.component.cpuAndMemoryStep().form.patchValue).toHaveBeenCalledWith({
       cores: 1,
@@ -288,7 +290,7 @@ describe('VmWizardComponent', () => {
     await fillWizard();
 
     jest.clearAllMocks();
-    const submit = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
+    const submit = await loader.getHarness(TnButtonHarness.with({ label: 'Save' }));
     await submit.click();
 
     const api = spectator.inject(ApiService);
@@ -361,6 +363,28 @@ describe('VmWizardComponent', () => {
       ['0000:03:00.0'],
     );
     expect(spectator.inject(VmGpuService).updateVmGpus).toHaveBeenCalledWith({ id: 4 }, ['0000:03:00.0']);
-    expect(spectator.inject(SlideInRef).close).toHaveBeenCalled();
+    expect(closedSpy).toHaveBeenCalledWith(true);
+  });
+
+  // The footerless panel host renders its progress bar from `form()?.isBusy?.()`, an OPTIONAL
+  // member — dropping it compiles and passes every other test while silently shipping a wizard
+  // whose save gives no feedback.
+  it('reports busy to the side panel host while the save is in flight', async () => {
+    await fillWizard();
+    expect(spectator.component.isBusy()).toBe(false);
+
+    jest.spyOn(spectator.inject(ApiService), 'call').mockReturnValue(NEVER);
+    const submit = await loader.getHarness(TnButtonHarness.with({ label: 'Save' }));
+    await submit.click();
+
+    expect(spectator.component.isBusy()).toBe(true);
+  });
+
+  it('reports unsaved changes to the side panel host once a step is edited', async () => {
+    expect(spectator.component.hasUnsavedChanges()).toBe(false);
+
+    await setInput('name', 'test');
+
+    expect(spectator.component.hasUnsavedChanges()).toBe(true);
   });
 });

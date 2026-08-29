@@ -1,19 +1,17 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, ChangeDetectionStrategy, DestroyRef, input, computed, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatIconButton } from '@angular/material/button';
-import { MatProgressBar } from '@angular/material/progress-bar';
-import { MatProgressSpinner } from '@angular/material/progress-spinner';
-import { MatTooltip } from '@angular/material/tooltip';
 import { Store } from '@ngrx/store';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent, TnTooltipDirective } from '@truenas/ui-components';
+import {
+  TnIconButtonComponent, TnIconComponent, TnProgressBarComponent, TnSpinnerComponent, TnTooltipDirective,
+} from '@truenas/ui-components';
 import { filter } from 'rxjs';
 import { JobState } from 'app/enums/job-state.enum';
 import { Job } from 'app/interfaces/job.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { abortJobPressed } from 'app/modules/jobs/store/job.actions';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { normalizeTestIdParts } from 'app/modules/test-id/normalize-test-id.utils';
 import { AppState } from 'app/store';
 
 @Component({
@@ -24,11 +22,9 @@ import { AppState } from 'app/store';
   imports: [
     TnIconComponent,
     TnTooltipDirective,
-    MatTooltip,
-    MatProgressSpinner,
-    MatProgressBar,
-    MatIconButton,
-    TestDirective,
+    TnSpinnerComponent,
+    TnProgressBarComponent,
+    TnIconButtonComponent,
     TranslateModule,
     DecimalPipe,
   ],
@@ -42,6 +38,11 @@ export class JobNameComponent {
   readonly job = input.required<Job>();
 
   protected isRunning = computed(() => this.job().state === JobState.Running);
+
+  // Pre-normalized so the dynamic description segment keeps resolving to the same
+  // `data-test` the legacy `[ixTest]` directive produced — the library's kebab-casing
+  // does not split letter→digit boundaries the way lodash does.
+  protected abortTestId = computed(() => normalizeTestIdParts(['abort-job', this.job().description]));
 
   protected readonly JobState = JobState;
 

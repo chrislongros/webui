@@ -1,12 +1,13 @@
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, signal, viewChild, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit,
+  signal, viewChild, inject, input,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { ReactiveFormsModule } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
+import { AbstractControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
 import { merge, of } from 'rxjs';
 import { debounceTime, switchMap } from 'rxjs/operators';
-import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
 import { Direction } from 'app/enums/direction.enum';
 import { Role } from 'app/enums/role.enum';
 import { SnapshotNamingOption } from 'app/enums/snapshot-naming-option.enum';
@@ -18,11 +19,13 @@ import { ReplicationCreate, ReplicationTask } from 'app/interfaces/replication-t
 import { AuthService } from 'app/modules/auth/auth.service';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { TreeNodeProvider } from 'app/modules/forms/ix-forms/components/ix-explorer/tree-node-provider.interface';
-import { IxFormatterService } from 'app/modules/forms/ix-forms/services/ix-formatter.service';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { IxFormHostForm } from 'app/modules/forms/ix-forms/components/ix-form/ix-form-host-form.directive';
+import { IxFormComponent, SubmitResult } from 'app/modules/forms/ix-forms/components/ix-form/ix-form.component';
+import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
+import { FormSidePanelService } from 'app/modules/slide-ins/form-side-panel/form-side-panel.service';
+import {
+  SidePanelFooterAction,
+} from 'app/modules/slide-ins/form-side-panel/side-panel-footer-actions';
 import { ApiService } from 'app/modules/websocket/api.service';
 import {
   GeneralSectionComponent,
@@ -43,7 +46,6 @@ import {
   ReplicationWizardComponent,
 } from 'app/pages/data-protection/replication/replication-wizard/replication-wizard.component';
 import { DatasetService } from 'app/services/dataset/dataset.service';
-import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 import { ErrorParserService } from 'app/services/errors/error-parser.service';
 import { KeychainCredentialService } from 'app/services/keychain-credential.service';
 import { ReplicationService } from 'app/services/replication.service';
@@ -55,36 +57,32 @@ import { ReplicationService } from 'app/services/replication.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
   providers: [ReplicationService],
   imports: [
-    ModalHeaderComponent,
-    MatCard,
-    MatCardContent,
     ReactiveFormsModule,
+    IxFormComponent,
     GeneralSectionComponent,
     TransportSectionComponent,
     SourceSectionComponent,
     TargetSectionComponent,
     ScheduleSectionComponent,
-    RequiresRolesDirective,
-    MatButton,
-    TestDirective,
     TranslateModule,
   ],
 })
-export class ReplicationFormComponent implements OnInit {
+export class ReplicationFormComponent extends IxFormHostForm implements OnInit {
   private api = inject(ApiService);
-  private errorHandler = inject(ErrorHandlerService);
   private errorParser = inject(ErrorParserService);
+  private formErrorHandler = inject(FormErrorHandlerService);
   private translate = inject(TranslateService);
-  formatter = inject(IxFormatterService);
   private cdr = inject(ChangeDetectorRef);
   private dialog = inject(DialogService);
-  private snackbar = inject(SnackbarService);
   private datasetService = inject(DatasetService);
   private replicationService = inject(ReplicationService);
   private keychainCredentials = inject(KeychainCredentialService);
   private authService = inject(AuthService);
-  slideInRef = inject<SlideInRef<ReplicationTask | undefined, ReplicationTask>>(SlideInRef);
+  private formPanel = inject(FormSidePanelService);
   private destroyRef = inject(DestroyRef);
+
+  /** The record being edited, supplied by the `<tn-side-panel>` host (undefined = create). */
+  readonly replicationToEdit = input<ReplicationTask | undefined>(undefined);
 
   protected readonly generalSection = viewChild.required(GeneralSectionComponent);
   protected readonly transportSection = viewChild.required(TransportSectionComponent);
@@ -92,7 +90,8 @@ export class ReplicationFormComponent implements OnInit {
   protected readonly targetSection = viewChild.required(TargetSectionComponent);
   protected readonly scheduleSection = viewChild.required(ScheduleSectionComponent);
 
-  protected isLoading = signal(false);
+  /** True while the eligible-snapshot count is in flight — surfaced through {@link isBusy}. */
+  private readonly isCountingSnapshots = signal(false);
 
   protected existingReplication: ReplicationTask | undefined;
 
@@ -104,22 +103,29 @@ export class ReplicationFormComponent implements OnInit {
   isSudoDialogShown = false;
   sshCredentials: KeychainSshCredentials[] = [];
 
-  protected readonly requiredRoles = [Role.ReplicationTaskWrite, Role.ReplicationTaskWritePull];
+  readonly requiredRoles = [Role.ReplicationTaskWrite, Role.ReplicationTaskWritePull];
 
-  constructor() {
-    this.existingReplication = this.slideInRef.getData();
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(Boolean(
-        this.generalSection()?.form?.dirty
-        || this.transportSection()?.form?.dirty
-        || this.sourceSection()?.form?.dirty
-        || this.targetSection()?.form?.dirty
-        || this.scheduleSection()?.form?.dirty,
-      ));
-    });
+  /**
+   * The one group `<ix-form>` drives its lifecycle off. The fields live in five child sections that
+   * each own a group, so this starts empty and {@link registerSectionForms} adopts them as its
+   * children — validity, dirtiness and the unsaved-changes guard then roll up for free instead of
+   * being re-aggregated by hand.
+   */
+  protected readonly form = new FormGroup<Record<string, AbstractControl>>({});
+
+  /**
+   * Whether the panel should show its progress bar: the wrapper's own submit/load state, plus the
+   * eligible-snapshot count this form runs on its own. The count deliberately does NOT gate Save
+   * (which `externalLoading` would), since it re-runs on every source-dataset edit.
+   */
+  override isBusy(): boolean {
+    return this.isCountingSnapshots() || super.isBusy();
   }
 
   ngOnInit(): void {
+    this.existingReplication = this.replicationToEdit();
+
+    this.registerSectionForms();
     this.countSnapshotsOnChanges();
     this.updateExplorersOnChanges();
     this.updateExplorers();
@@ -132,6 +138,16 @@ export class ReplicationFormComponent implements OnInit {
 
   get isNew(): boolean {
     return !this.existingReplication;
+  }
+
+  /**
+   * Secondary footer action rendered by the `<tn-side-panel>` host. Only in create mode (reached by
+   * swapping out of the wizard) — editing an existing task has no wizard to switch back to.
+   */
+  get footerActions(): SidePanelFooterAction[] {
+    return this.isNew
+      ? [{ label: T('Switch To Wizard'), testId: 'switch-to-wizard', onClick: () => this.onSwitchToWizard() }]
+      : [];
   }
 
   get sections(): [
@@ -158,49 +174,60 @@ export class ReplicationFormComponent implements OnInit {
     return this.generalSection().form.controls.direction.value === Direction.Push;
   }
 
+  get isSourceLocal(): boolean {
+    return this.isPush || this.isLocal;
+  }
+
+  get isTargetLocal(): boolean {
+    return !this.isPush || this.isLocal;
+  }
+
   get usesNameRegex(): boolean {
     return this.sourceSection().form.controls.schema_or_regex.value === SnapshotNamingOption.NameRegex;
   }
 
-  get isFormValid(): boolean {
-    return this.sections.every((section) => section.form.valid);
+  private registerSectionForms(): void {
+    const registrations = [
+      ['general', this.generalSection()],
+      ['transport', this.transportSection()],
+      ['source', this.sourceSection()],
+      ['target', this.targetSection()],
+      ['schedule', this.scheduleSection()],
+    ] as const;
+    registrations.forEach(([name, section]) => this.form.addControl(name, section.form));
   }
 
   setForEdit(): void {
     this.cdr.markForCheck();
   }
 
-  onSubmit(): void {
+  protected handleSubmit = (): SubmitResult => {
     const payload = this.getPayload();
+    const isNew = this.isNew;
 
-    const operation$ = this.existingReplication
-      ? this.api.call('replication.update', [this.existingReplication.id, payload])
-      : this.api.call('replication.create', [payload]);
-
-    this.isLoading.set(true);
-    operation$
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(
-        {
-          next: (response) => {
-            this.snackbar.success(
-              this.isNew
-                ? this.translate.instant('Replication task created.')
-                : this.translate.instant('Replication task saved.'),
-            );
-            this.isLoading.set(false);
-            this.slideInRef.close({ response });
-          },
-          error: (error: unknown) => {
-            this.isLoading.set(false);
-            this.errorHandler.showErrorModal(error);
-          },
-        },
-      );
-  }
+    return {
+      request$: this.existingReplication
+        ? this.api.call('replication.update', [this.existingReplication.id, payload])
+        : this.api.call('replication.create', [payload]),
+      successMessage: isNew
+        ? this.translate.instant('Replication task created.')
+        : this.translate.instant('Replication task saved.'),
+      // The section groups, not the aggregate, carry the API field names, so hand the handler all
+      // five — otherwise every validation error would fall back to a modal.
+      onError: (error: unknown) => {
+        this.formErrorHandler.handleValidationErrors(error, this.sections.map((section) => section.form));
+        return true;
+      },
+    };
+  };
 
   onSwitchToWizard(): void {
-    this.slideInRef.swap?.(ReplicationWizardComponent, { wide: true });
+    // Swap back to the wizard in place (footerless — the stepper owns its buttons).
+    this.formPanel.swap(ReplicationWizardComponent, {
+      title: this.translate.instant('Replication Task Wizard'),
+      wide: true,
+      footerless: true,
+    });
   }
 
   private getPayload(): ReplicationCreate {
@@ -253,7 +280,7 @@ export class ReplicationFormComponent implements OnInit {
       payload.naming_schema = formValues.also_include_naming_schema;
     }
 
-    this.isLoading.set(true);
+    this.isCountingSnapshots.set(true);
 
     this.authService.hasRole(this.requiredRoles).pipe(
       switchMap((hasRole) => {
@@ -274,7 +301,8 @@ export class ReplicationFormComponent implements OnInit {
             dataset: String(formValues.source_datasets),
           },
         );
-        this.isLoading.set(false);
+        this.isCountingSnapshots.set(false);
+        this.cdr.markForCheck();
       },
       error: (error: unknown) => {
         this.isEligibleSnapshotsMessageRed = true;
@@ -284,7 +312,8 @@ export class ReplicationFormComponent implements OnInit {
           this.eligibleSnapshotsMessage = `${this.eligibleSnapshotsMessage} ${firstError}`;
         }
 
-        this.isLoading.set(false);
+        this.isCountingSnapshots.set(false);
+        this.cdr.markForCheck();
       },
     });
   }
@@ -342,6 +371,7 @@ export class ReplicationFormComponent implements OnInit {
           return;
         }
 
+        this.isSudoDialogShown = true;
         this.dialog.confirm({
           title: this.translate.instant('Sudo Enabled'),
           message: this.translate.instant(helptextReplicationWizard.sudoWarning),
@@ -349,7 +379,6 @@ export class ReplicationFormComponent implements OnInit {
           buttonText: this.translate.instant('Use Sudo For ZFS Commands'),
         }).pipe(takeUntilDestroyed(this.destroyRef)).subscribe((useSudo) => {
           this.generalSection().form.controls.sudo.setValue(useSudo);
-          this.isSudoDialogShown = true;
         });
       });
   }

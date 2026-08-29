@@ -1,23 +1,21 @@
+import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { ChangeDetectionStrategy, Component, DestroyRef, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import {
-  MAT_DIALOG_DATA, MatDialogClose, MatDialogRef, MatDialogTitle,
-} from '@angular/material/dialog';
-import { MatSlider, MatSliderThumb } from '@angular/material/slider';
 import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
-import { of } from 'rxjs';
+import {
+  TnButtonComponent, TnDialogShellComponent, TnFormFieldComponent, TnInputComponent,
+  TnRadioComponent, TnRadioGroupComponent,
+  TnSliderComponent, TnSliderThumbDirective, TnTestIdDirective,
+  InputType,
+} from '@truenas/ui-components';
 import { mapToOptions } from 'app/helpers/options.helper';
 import { Pool, PruneDedupTableParams } from 'app/interfaces/pool.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
 import { IxLabelComponent } from 'app/modules/forms/ix-forms/components/ix-label/ix-label.component';
-import { IxRadioGroupComponent } from 'app/modules/forms/ix-forms/components/ix-radio-group/ix-radio-group.component';
 import { SnackbarService } from 'app/modules/snackbar/services/snackbar.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
@@ -37,29 +35,31 @@ export const pruneByLabels = new Map<PruneBy, string>([
   templateUrl: './prune-dedup-table-dialog.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    TnDialogShellComponent,
     FormActionsComponent,
-    IxInputComponent,
-    MatButton,
-    MatDialogTitle,
+    TnFormFieldComponent,
+    TnInputComponent,
+    TnButtonComponent,
     ReactiveFormsModule,
-    TestDirective,
+    TnTestIdDirective,
     TranslateModule,
-    IxRadioGroupComponent,
-    MatDialogClose,
-    MatSlider,
-    MatSliderThumb,
+    TnRadioGroupComponent,
+    TnRadioComponent,
+    TnSliderComponent,
+    TnSliderThumbDirective,
     IxLabelComponent,
   ],
 })
 export class PruneDedupTableDialog {
+  protected readonly InputType = InputType;
   private formBuilder = inject(NonNullableFormBuilder);
   private api = inject(ApiService);
   private dialog = inject(DialogService);
   private snackbar = inject(SnackbarService);
   private translate = inject(TranslateService);
   private errorHandler = inject(ErrorHandlerService);
-  private dialogRef = inject<MatDialogRef<PruneDedupTableDialog>>(MatDialogRef);
-  protected pool = inject<Pool>(MAT_DIALOG_DATA);
+  protected dialogRef = inject<DialogRef<unknown, PruneDedupTableDialog>>(DialogRef);
+  protected pool = inject<Pool>(DIALOG_DATA);
   private destroyRef = inject(DestroyRef);
 
   protected form = this.formBuilder.group({
@@ -68,7 +68,8 @@ export class PruneDedupTableDialog {
     days: [null as number | null],
   });
 
-  protected readonly pruneByOptions$ = of(mapToOptions(pruneByLabels, this.translate));
+  /** Held in a field, not rebuilt per change-detection pass: `tn-radio-group` tracks options by `value`. */
+  protected readonly pruneByOptions = mapToOptions(pruneByLabels, this.translate);
 
   get isPruningByPercentage(): boolean {
     return this.form.value.pruneBy === PruneBy.Percentage;
@@ -96,9 +97,5 @@ export class PruneDedupTableDialog {
         this.snackbar.success(this.translate.instant('Deduplication table pruned'));
         this.dialogRef.close(true);
       });
-  }
-
-  protected formatSliderAsPercentage(value: number): string {
-    return `${value}%`;
   }
 }

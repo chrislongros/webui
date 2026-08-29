@@ -1,6 +1,7 @@
+import { signal } from '@angular/core';
 import { Spectator, createComponentFactory, mockProvider } from '@ngneat/spectator/jest';
 import { provideMockStore } from '@ngrx/store/testing';
-import { MockComponents } from 'ng-mocks';
+import { MockComponents, MockInstance } from 'ng-mocks';
 import { of } from 'rxjs';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { Pool } from 'app/interfaces/pool.interface';
@@ -11,8 +12,11 @@ import { SharesDashboardComponent } from 'app/pages/sharing/components/shares-da
 import { SmbCardComponent } from 'app/pages/sharing/components/shares-dashboard/smb-card/smb-card.component';
 import { WebShareCardComponent } from 'app/pages/sharing/components/shares-dashboard/webshare-card/webshare-card.component';
 import { poolStore } from 'app/services/global-store/stores.constant';
+import { LicenseService } from 'app/services/license.service';
 
 describe('SharesDashboardComponent', () => {
+  MockInstance.scope();
+
   let spectator: Spectator<SharesDashboardComponent>;
   const createComponent = createComponentFactory({
     component: SharesDashboardComponent,
@@ -40,15 +44,38 @@ describe('SharesDashboardComponent', () => {
     ],
   });
 
+  function setup(shouldShowWebshare = true): void {
+    spectator = createComponent({
+      providers: [
+        mockProvider(LicenseService, {
+          shouldShowWebshare$: of(shouldShowWebshare),
+        }),
+      ],
+    });
+  }
+
   beforeEach(() => {
-    spectator = createComponent();
+    // TODO: Workaround for https://github.com/help-me-mom/ng-mocks/issues/8634
+    // ng-mocks does not initialize signal-based viewChild queries on mocked components.
+    MockInstance(SmbCardComponent, 'configForm', signal(undefined));
+    MockInstance(NfsCardComponent, 'configForm', signal(undefined));
+    MockInstance(IscsiCardComponent, 'configForm', signal(undefined));
+    MockInstance(NvmeOfCardComponent, 'configForm', signal(undefined));
   });
 
   it('shows cards for each share type', () => {
+    setup();
+
     expect(spectator.query(SmbCardComponent)).toExist();
     expect(spectator.query(NfsCardComponent)).toExist();
     expect(spectator.query(IscsiCardComponent)).toExist();
     expect(spectator.query(NvmeOfCardComponent)).toExist();
     expect(spectator.query(WebShareCardComponent)).toExist();
+  });
+
+  it('hides WebShare card on enterprise systems', () => {
+    setup(false);
+
+    expect(spectator.query(WebShareCardComponent)).not.toExist();
   });
 });

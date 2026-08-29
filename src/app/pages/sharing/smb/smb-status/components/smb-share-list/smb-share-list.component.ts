@@ -1,46 +1,45 @@
-import { AsyncPipe } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
-import { MatToolbarRow } from '@angular/material/toolbar';
+import {
+  ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, OnInit, computed, inject, signal,
+} from '@angular/core';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
+import {
+  TnButtonComponent, TnCardComponent, TnCardHeaderActionsDirective, TnCardHeaderDirective, TnCellDefDirective,
+  TnHeaderCellDefDirective, TnTableColumnDirective, TnTableComponent, TnTablePagerComponent, TnTestIdDirective,
+  type TnSortEvent,
+} from '@truenas/ui-components';
 import { tap } from 'rxjs';
 import { SmbInfoLevel } from 'app/enums/smb-info-level.enum';
 import { SmbShareInfo } from 'app/interfaces/smb-status.interface';
 import { EmptyService } from 'app/modules/empty/empty.service';
 import { BasicSearchComponent } from 'app/modules/forms/search-input/components/basic-search/basic-search.component';
-import { AsyncDataProvider } from 'app/modules/ix-table/classes/async-data-provider/async-data-provider';
-import { IxTableComponent } from 'app/modules/ix-table/components/ix-table/ix-table.component';
-import { textColumn } from 'app/modules/ix-table/components/ix-table-body/cells/ix-cell-text/ix-cell-text.component';
-import { IxTableBodyComponent } from 'app/modules/ix-table/components/ix-table-body/ix-table-body.component';
-import { IxTableColumnsSelectorComponent } from 'app/modules/ix-table/components/ix-table-columns-selector/ix-table-columns-selector.component';
-import { IxTableHeadComponent } from 'app/modules/ix-table/components/ix-table-head/ix-table-head.component';
-import { IxTablePagerComponent } from 'app/modules/ix-table/components/ix-table-pager/ix-table-pager.component';
-import { IxTableEmptyDirective } from 'app/modules/ix-table/directives/ix-table-empty.directive';
-import { createTable } from 'app/modules/ix-table/utils';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import { AsyncDataProvider } from 'app/modules/tn-table/classes/async-data-provider/async-data-provider';
+import { column } from 'app/modules/tn-table/column-configs';
+import { TableColumnPickerComponent } from 'app/modules/tn-table/components/table-column-picker/table-column-picker.component';
+import {
+  createTable, dataProviderLoading, dataProviderRows, mapTnSortToTableSort, toDisplayedColumns, toUniqueRowTag,
+} from 'app/modules/tn-table/utils';
 import { ApiService } from 'app/modules/websocket/api.service';
 
 @Component({
   selector: 'ix-smb-share-list',
   templateUrl: './smb-share-list.component.html',
+  styleUrls: ['./smb-share-list.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatCard,
-    MatToolbarRow,
+    TnCardComponent,
+    TnCardHeaderDirective,
+    TnCardHeaderActionsDirective,
     BasicSearchComponent,
-    IxTableColumnsSelectorComponent,
-    MatButton,
-    TestDirective,
-    MatCardContent,
-    IxTableComponent,
-    IxTableEmptyDirective,
-    IxTableHeadComponent,
-    IxTableBodyComponent,
-    IxTablePagerComponent,
+    TableColumnPickerComponent,
+    TnButtonComponent,
+    TnTestIdDirective,
+    TnTableComponent,
+    TnTableColumnDirective,
+    TnHeaderCellDefDirective,
+    TnCellDefDirective,
+    TnTablePagerComponent,
     TranslateModule,
-    AsyncPipe,
   ],
 })
 export class SmbShareListComponent implements OnInit {
@@ -51,48 +50,53 @@ export class SmbShareListComponent implements OnInit {
   private destroyRef = inject(DestroyRef);
 
   searchQuery = signal('');
-  dataProvider: AsyncDataProvider<SmbShareInfo>;
+  private readonly smbStatus$ = this.api.call('smb.status', [SmbInfoLevel.Shares]).pipe(
+    tap((shares: SmbShareInfo[]) => {
+      this.shares = shares;
+      if (this.searchQuery()) {
+        this.onListFiltered(this.searchQuery());
+      }
+    }),
+    takeUntilDestroyed(this.destroyRef),
+  );
+
+  dataProvider = new AsyncDataProvider<SmbShareInfo>(this.smbStatus$);
+  protected readonly rows = dataProviderRows(this.dataProvider);
+  protected readonly isLoading = dataProviderLoading(this.dataProvider);
+  protected readonly emptyType = toSignal(this.dataProvider.emptyType$);
   shares: SmbShareInfo[] = [];
 
-  columns = createTable<SmbShareInfo>([
-    textColumn({ title: this.translate.instant('Service'), propertyName: 'service' }),
-    textColumn({ title: this.translate.instant('Session ID'), propertyName: 'session_id' }),
-    textColumn({ title: this.translate.instant('Machine'), propertyName: 'machine' }),
-    textColumn({ title: this.translate.instant('Connected at'), propertyName: 'connected_at' }),
-    textColumn({
+  protected readonly columns = signal(createTable<SmbShareInfo>([
+    column({ title: this.translate.instant('Service'), propertyName: 'service' }),
+    column({ title: this.translate.instant('Session ID'), propertyName: 'session_id' }),
+    column({ title: this.translate.instant('Machine'), propertyName: 'machine' }),
+    column({ title: this.translate.instant('Connected at'), propertyName: 'connected_at' }),
+    column({
       title: this.translate.instant('Encryption'),
       propertyName: 'encryption',
       getValue: (row) => row.encryption.cipher,
     }),
-    textColumn({
+    column({
       title: this.translate.instant('Signing'),
       propertyName: 'signing',
       getValue: (row) => row.signing.cipher,
     }),
-  ], {
-    uniqueRowTag: (row) => 'smb-share-' + row.server_id.unique_id + '-' + row.machine,
-    ariaLabels: (row) => [row.machine, this.translate.instant('SMB Share')],
-  });
+  ]));
+
+  protected readonly displayedColumns = computed(() => toDisplayedColumns(this.columns()));
+
+  protected readonly trackByShare = (_index: number, row: SmbShareInfo): string => {
+    return `${row.server_id.unique_id}-${row.machine}`;
+  };
 
   ngOnInit(): void {
-    const smbStatus$ = this.api.call('smb.status', [SmbInfoLevel.Shares]).pipe(
-      tap((shares: SmbShareInfo[]) => {
-        this.shares = shares;
-        if (this.searchQuery()) {
-          this.onListFiltered(this.searchQuery());
-        }
-      }),
-      takeUntilDestroyed(this.destroyRef),
-    );
-
-    this.dataProvider = new AsyncDataProvider<SmbShareInfo>(smbStatus$);
     this.loadData();
     this.dataProvider.emptyType$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       this.onListFiltered(this.searchQuery());
     });
   }
 
-  loadData(): void {
+  protected loadData(): void {
     this.dataProvider.load();
   }
 
@@ -104,9 +108,18 @@ export class SmbShareListComponent implements OnInit {
     });
   }
 
-  columnsChange(columns: typeof this.columns): void {
-    this.columns = [...columns];
-    this.cdr.detectChanges();
+  protected uniqueRowTag(row: SmbShareInfo): string {
+    return toUniqueRowTag('smb-share-' + row.server_id.unique_id + '-' + row.machine);
+  }
+
+  protected onColumnsChange(columns: ReturnType<typeof this.columns>): void {
+    this.columns.set([...columns]);
     this.cdr.markForCheck();
+  }
+
+  protected onSortChange(event: TnSortEvent): void {
+    this.dataProvider.setSorting(
+      mapTnSortToTableSort<SmbShareInfo>(event, this.displayedColumns(), { columns: this.columns() }),
+    );
   }
 }

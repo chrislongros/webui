@@ -1,22 +1,21 @@
-import { NgClass } from '@angular/common';
+import { DialogRef } from '@angular/cdk/dialog';
+import { Overlay } from '@angular/cdk/overlay';
+import { NgClass, NgTemplateOutlet } from '@angular/common';
 import {
-  ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, inject, OnInit,
+  ChangeDetectionStrategy, Component, DestroyRef, OnInit, computed, inject, signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { MatBadge } from '@angular/material/badge';
-import { MatIconButton } from '@angular/material/button';
-import { MatDialog, MatDialogRef } from '@angular/material/dialog';
-import { MatTooltip } from '@angular/material/tooltip';
-import { TranslateModule } from '@ngx-translate/core';
-import { TnIconComponent } from '@truenas/ui-components';
+import { marker as T } from '@biesbjerg/ngx-translate-extract-marker';
+import { TranslateService } from '@ngx-translate/core';
+import { TnDialog, TnIconButtonComponent } from '@truenas/ui-components';
 import { isObject } from 'lodash-es';
 import { UiSearchDirective } from 'app/directives/ui-search.directive';
 import { TrueCommandStatus } from 'app/enums/true-command-status.enum';
 import { helptextTopbar } from 'app/helptext/topbar';
 import { TrueCommandConfig } from 'app/interfaces/true-command-config.interface';
 import { DialogService } from 'app/modules/dialog/dialog.service';
+import { StatusBadge, StatusBadgeComponent } from 'app/modules/layout/topbar/status-badge/status-badge.component';
 import { LoaderService } from 'app/modules/loader/loader.service';
-import { TestDirective } from 'app/modules/test-id/test.directive';
 import {
   TruecommandConnectModalComponent,
   TruecommandSignupModalResult,
@@ -30,84 +29,108 @@ import { trueCommandElements } from 'app/modules/truecommand/truecommand-button.
 import { ApiService } from 'app/modules/websocket/api.service';
 import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
+const truecommandStatusLabels: Record<TrueCommandStatus, string> = {
+  [TrueCommandStatus.Disabled]: T('TrueCommand is disabled'),
+  [TrueCommandStatus.Connecting]: T('Connecting to TrueCommand'),
+  [TrueCommandStatus.Connected]: T('TrueCommand is connected'),
+  [TrueCommandStatus.Failed]: T('TrueCommand connection failed'),
+};
+
 @Component({
   selector: 'ix-truecommand-button',
-  styleUrls: ['./truecommand-button.component.scss'],
   templateUrl: './truecommand-button.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    MatIconButton,
-    TestDirective,
-    MatTooltip,
-    TnIconComponent,
-    MatBadge,
+    TnIconButtonComponent,
     NgClass,
+    NgTemplateOutlet,
+    StatusBadgeComponent,
     UiSearchDirective,
-    TranslateModule,
   ],
 })
 export class TruecommandButtonComponent implements OnInit {
   private api = inject(ApiService);
   private dialogService = inject(DialogService);
-  private matDialog = inject(MatDialog);
+  private tnDialog = inject(TnDialog);
+  private overlay = inject(Overlay);
   private loader = inject(LoaderService);
   private errorHandler = inject(ErrorHandlerService);
-  private cdr = inject(ChangeDetectorRef);
   private destroyRef = inject(DestroyRef);
+  private translate = inject(TranslateService);
 
   readonly TrueCommandStatus = TrueCommandStatus;
-  tooltips = helptextTopbar.tooltips;
   protected searchableElements = trueCommandElements;
 
-  tcStatus: TrueCommandConfig;
-
+  protected tcStatus = signal<TrueCommandConfig | null>(null);
   private tcConnected = false;
   private isTcStatusOpened = false;
-  private tcStatusDialogRef: MatDialogRef<TruecommandStatusModalComponent>;
+  private tcStatusDialogRef: DialogRef<boolean, TruecommandStatusModalComponent> | undefined;
 
-  get tcsStatusMatBadge(): string {
-    if (this.tcStatus.status === TrueCommandStatus.Connected) {
-      return 'check';
+  protected statusBadge = computed<StatusBadge | null>(() => {
+    switch (this.tcStatus()?.status) {
+      case TrueCommandStatus.Connected:
+        return { icon: 'check', background: 'var(--green)' };
+      case TrueCommandStatus.Failed:
+        return { icon: 'close', background: 'var(--red)' };
+      case TrueCommandStatus.Connecting:
+        return { icon: 'clock-outline', background: 'var(--yellow)', spinning: true };
+      default:
+        return null;
     }
+  });
 
-    if (this.tcStatus.status === TrueCommandStatus.Failed) {
-      return 'priority_high';
+  protected tooltip = computed(() => {
+    const config = this.tcStatus();
+    if (!config) {
+      return this.translate.instant(helptextTopbar.tooltips.truecommandStatus);
     }
-
-    return '';
-  }
+    const label = this.translate.instant(truecommandStatusLabels[config.status]);
+    if (config.status === TrueCommandStatus.Failed && config.status_reason) {
+      return `${label}\n${this.translate.instant(config.status_reason)}`;
+    }
+    return label;
+  });
 
   ngOnInit(): void {
     this.api.call('truecommand.config').pipe(takeUntilDestroyed(this.destroyRef)).subscribe((config) => {
-      this.tcStatus = config;
-      this.tcConnected = !!config.api_key;
-      this.cdr.markForCheck();
+      this.tcStatus.set(config);
+      this.tcConnected = this.isConnected(config);
     });
     this.api.subscribe('truecommand.config').pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
-      this.tcStatus = event.fields;
-      this.tcConnected = !!event.fields.api_key;
+      this.tcStatus.set(event.fields);
+      this.tcConnected = this.isConnected(event.fields);
       if (this.isTcStatusOpened && this.tcStatusDialogRef) {
-        this.tcStatusDialogRef.componentInstance.update(this.tcStatus);
+        this.tcStatusDialogRef.componentInstance?.update(event.fields);
       }
-      this.cdr.markForCheck();
     });
   }
 
+  private isConnected(config: TrueCommandConfig | null): boolean {
+    if (!config) {
+      return false;
+    }
+    // `api_key` may be redacted by the middleware, so rely on `enabled`
+    // and the connection status instead of the presence of the api key.
+    return !!config.api_key || (config.enabled && config.status !== TrueCommandStatus.Disabled);
+  }
+
   handleUpdate(): void {
-    this.matDialog
+    this.tnDialog
       .open(TruecommandConnectModalComponent, {
         maxWidth: '420px',
         minWidth: '350px',
         data: {
           isConnected: this.tcConnected,
-          config: this.tcStatus,
+          config: this.tcStatus(),
         } as TruecommandSignupModalState,
       })
-      .afterClosed()
+      .closed
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((dialogResult: TruecommandSignupModalResult) => {
         if (isObject(dialogResult) && dialogResult?.deregistered) {
-          this.tcStatusDialogRef.close(true);
+          // The status dialog is only open when the update flow was launched from it.
+          // Reached via the signup flow it is undefined, so guard the close.
+          this.tcStatusDialogRef?.close(true);
         }
       });
   }
@@ -143,8 +166,8 @@ export class TruecommandButtonComponent implements OnInit {
   }
 
   private openSignupDialog(): void {
-    this.matDialog.open(TruecommandSignupModalComponent)
-      .afterClosed()
+    this.tnDialog.open(TruecommandSignupModalComponent)
+      .closed
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((shouldConnect) => {
         if (!shouldConnect) {
@@ -156,30 +179,27 @@ export class TruecommandButtonComponent implements OnInit {
   }
 
   private openStatusDialog(): void {
-    const data = {
-      parent: this,
-      data: this.tcStatus,
-    };
     if (this.isTcStatusOpened) {
-      this.tcStatusDialogRef.close(true);
-    } else {
-      this.isTcStatusOpened = true;
-      this.tcStatusDialogRef = this.matDialog.open(TruecommandStatusModalComponent, {
-        width: '400px',
-        hasBackdrop: true,
-        position: {
-          top: '48px',
-          right: '0px',
-        },
-        data,
-      });
+      this.tcStatusDialogRef?.close(true);
+      return;
     }
 
-    this.tcStatusDialogRef.afterClosed().pipe(takeUntilDestroyed(this.destroyRef)).subscribe(
-      () => {
-        this.isTcStatusOpened = false;
-        this.cdr.markForCheck();
+    this.isTcStatusOpened = true;
+    this.tcStatusDialogRef = this.tnDialog.open(TruecommandStatusModalComponent, {
+      width: '400px',
+      hasBackdrop: true,
+      positionStrategy: this.overlay.position().global().top('48px').right('0px'),
+      data: {
+        parent: this,
+        data: this.tcStatus(),
       },
-    );
+    });
+
+    // Clear our reference once the dialog is gone so a stale ref isn't carried
+    // into the next open and we don't try to call .update on a destroyed component.
+    this.tcStatusDialogRef.closed.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.isTcStatusOpened = false;
+      this.tcStatusDialogRef = undefined;
+    });
   }
 }

@@ -18,6 +18,7 @@ import { OnOff } from 'app/enums/on-off.enum';
 import { WithInherit } from 'app/enums/with-inherit.enum';
 import { YesNo } from 'app/enums/yes-no.enum';
 import { ZfsProperty } from 'app/interfaces/zfs-property.interface';
+import { SharingTierInfo } from 'app/interfaces/zfs-tier.interface';
 
 /** Base interface for dataset share summaries from middleware */
 export interface DatasetShareSummary {
@@ -127,7 +128,6 @@ export interface DatasetCreate {
   encryption_options?: {
     generate_key?: boolean;
     pbkdf2iters?: number;
-    algorithm?: string;
     passphrase?: string;
     key?: string;
   };
@@ -173,7 +173,7 @@ export interface DatasetDetails {
   id: string;
   encrypted: boolean;
   available: ZfsProperty<string, number>;
-  encryption_algorithm: ZfsProperty<string>;
+  encryption_algorithm: ZfsProperty<string | null>;
   encryption_root: string;
   key_format: ZfsProperty<EncryptionKeyFormat>;
   key_loaded: boolean;
@@ -215,6 +215,7 @@ export interface DatasetDetails {
   compression: ZfsProperty<string>;
   compressratio: ZfsProperty<string>;
   deduplication: ZfsProperty<string>;
+  tier?: SharingTierInfo | null;
   user_properties?: Record<string, ZfsProperty<string, string | number>>;
 }
 

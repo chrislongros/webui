@@ -1,14 +1,20 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, signal, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy, Component, DestroyRef, OnInit, signal, inject, input,
+} from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   UntypedFormGroup, Validators, ReactiveFormsModule,
 } from '@angular/forms';
-import { MatButton } from '@angular/material/button';
-import { MatCard, MatCardContent } from '@angular/material/card';
 import { FormControl, FormGroup } from '@ngneat/reactive-forms';
 import { TranslateService, TranslateModule } from '@ngx-translate/core';
-import { BehaviorSubject, Observable, of } from 'rxjs';
-import { RequiresRolesDirective } from 'app/directives/requires-roles/requires-roles.directive';
+import {
+  TnCheckboxComponent,
+  TnFormFieldComponent,
+  TnFormSectionComponent,
+  TnInputComponent,
+  TnSelectComponent,
+} from '@truenas/ui-components';
+import { BehaviorSubject, Observable } from 'rxjs';
 import { Role } from 'app/enums/role.enum';
 import { getDynamicFormSchemaNode } from 'app/helpers/get-dynamic-form-schema-node';
 import {
@@ -25,60 +31,49 @@ import { CustomUntypedFormField } from 'app/modules/forms/ix-dynamic-form/compon
 import {
   IxDynamicFormComponent,
 } from 'app/modules/forms/ix-dynamic-form/components/ix-dynamic-form/ix-dynamic-form.component';
-import { FormActionsComponent } from 'app/modules/forms/ix-forms/components/form-actions/form-actions.component';
-import { IxCheckboxComponent } from 'app/modules/forms/ix-forms/components/ix-checkbox/ix-checkbox.component';
-import { IxFieldsetComponent } from 'app/modules/forms/ix-forms/components/ix-fieldset/ix-fieldset.component';
-import { IxInputComponent } from 'app/modules/forms/ix-forms/components/ix-input/ix-input.component';
-import { IxSelectComponent } from 'app/modules/forms/ix-forms/components/ix-select/ix-select.component';
-import { FormErrorHandlerService } from 'app/modules/forms/ix-forms/services/form-error-handler.service';
-import { ModalHeaderComponent } from 'app/modules/slide-ins/components/modal-header/modal-header.component';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
-import { TestDirective } from 'app/modules/test-id/test.directive';
+import {
+  IxFormHostForm,
+} from 'app/modules/forms/ix-forms/components/ix-form/ix-form-host-form.directive';
+import {
+  IxFormComponent,
+  FormSubmitEvent,
+  SubmitResult,
+} from 'app/modules/forms/ix-forms/components/ix-form/ix-form.component';
 import { ignoreTranslation } from 'app/modules/translate/translate.helper';
 import { ApiService } from 'app/modules/websocket/api.service';
-import { ErrorHandlerService } from 'app/services/errors/error-handler.service';
 
 @Component({
   selector: 'ix-reporting-exporters-form',
   templateUrl: './reporting-exporters-form.component.html',
-  styleUrls: ['./reporting-exporters-form.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
-    ModalHeaderComponent,
-    MatCard,
-    MatCardContent,
+    IxFormComponent,
     ReactiveFormsModule,
-    IxFieldsetComponent,
-    IxInputComponent,
-    IxSelectComponent,
-    IxCheckboxComponent,
-    FormActionsComponent,
-    RequiresRolesDirective,
-    MatButton,
-    TestDirective,
+    TnFormFieldComponent,
+    TnInputComponent,
+    TnSelectComponent,
+    TnCheckboxComponent,
     TranslateModule,
     IxDynamicFormComponent,
+    TnFormSectionComponent,
   ],
 })
-export class ReportingExportersFormComponent implements OnInit {
+export class ReportingExportersFormComponent extends IxFormHostForm implements OnInit {
   private translate = inject(TranslateService);
   private api = inject(ApiService);
-  private errorHandler = inject(ErrorHandlerService);
-  private formErrorHandler = inject(FormErrorHandlerService);
-  slideInRef = inject<SlideInRef<ReportingExporter | undefined, boolean>>(SlideInRef);
   private destroyRef = inject(DestroyRef);
+
+  /**
+   * the record being edited.
+   * supplied by the `<tn-side-panel>` host (null = create).
+   **/
+  readonly exporter = input<ReportingExporter | undefined>(undefined);
 
   get isNew(): boolean {
     return !this.editingExporter;
   }
 
-  get title(): string {
-    return this.isNew
-      ? this.translate.instant('Add Reporting Exporter')
-      : this.translate.instant('Edit Reporting Exporter');
-  }
-
-  form = new FormGroup({
+  protected readonly form = new FormGroup({
     name: new FormControl(null as string | null, Validators.required),
     enabled: new FormControl(true),
     type: new FormControl(null as string | null, Validators.required),
@@ -89,26 +84,60 @@ export class ReportingExportersFormComponent implements OnInit {
     return this.form.controls.attributes as UntypedFormGroup;
   }
 
-  protected isLoading = signal(false);
-  protected isLoadingSchemas = signal(true);
-  dynamicSection: DynamicFormSchema[] = [];
+  /**
+   * Whether the exporter schemas have been loaded and the attribute controls built. Gates the
+   * dynamic section: while it is false there are no `attributes` controls for `ix-dynamic-form`
+   * to bind to, and it stays false when the load fails so the section is never rendered empty.
+   */
+  protected readonly schemasLoaded = signal(false);
+  protected dynamicSection: DynamicFormSchema[] = [];
   protected editingExporter: ReportingExporter | undefined;
 
-  protected exporterTypeOptions$: Observable<Option[]>;
+  protected readonly exporterTypeOptions = signal<Option[]>([]);
   protected reportingExporterList: ReportingExporterList[] = [];
-  protected readonly requiredRoles = [Role.ReportingWrite];
-
-  constructor() {
-    this.slideInRef.requireConfirmationWhen(() => {
-      return of(this.form.dirty);
-    });
-    this.editingExporter = this.slideInRef.getData();
-  }
+  readonly requiredRoles = [Role.ReportingWrite];
 
   ngOnInit(): void {
-    this.loadSchemas();
+    this.editingExporter = this.exporter();
+    // Subscribed before the load, for two reasons: `loadFormConfig`'s patch callback is replayed by
+    // `retryLoad`, so wiring it in there would register a second subscription; and when the schemas
+    // arrive synchronously, the edit-mode `patchValue({ type })` below has to reach
+    // `onExporterTypeChanged` — otherwise the chosen exporter's attribute controls stay disabled.
     this.handleTypeChange();
+    this.loadSchemas();
   }
+
+  protected handleSubmit = (event: FormSubmitEvent): SubmitResult => {
+    const submitted = event.allValues as {
+      name: string;
+      enabled: boolean;
+      type: string;
+      attributes: Record<string, unknown>;
+    };
+    // `attributes` is copied too, not just the outer object: the lines below write and delete keys
+    // in it, and a shallow spread would mutate whatever object `allValues` handed over.
+    const values = { ...submitted, attributes: { ...submitted.attributes } };
+
+    values.attributes['exporter_type'] = values.type;
+    delete (values as Record<string, unknown>)['type'];
+
+    for (const [key, value] of Object.entries(values.attributes)) {
+      if (value == null || value === '') {
+        delete values.attributes[key];
+      }
+    }
+
+    const request$ = this.editingExporter
+      ? this.api.call('reporting.exporters.update', [this.editingExporter.id, values])
+      : this.api.call('reporting.exporters.create', [values]);
+
+    return {
+      request$,
+      successMessage: this.isNew
+        ? this.translate.instant('Exporter created')
+        : this.translate.instant('Exporter updated'),
+    };
+  };
 
   private handleTypeChange(): void {
     this.form.controls.type.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
@@ -118,30 +147,26 @@ export class ReportingExportersFormComponent implements OnInit {
     });
   }
 
+  /**
+   * Loads the exporter schemas through {@link IxFormHostForm.loadFormConfig}, so the panel shows its
+   * progress bar while they arrive and — on failure — keeps Save disabled behind a retry banner
+   * rather than letting the user submit a form whose attribute controls were never built.
+   */
   private loadSchemas(): void {
-    this.isLoading.set(true);
-    this.getExportersSchemas().pipe(
-      takeUntilDestroyed(this.destroyRef),
-    ).subscribe({
-      next: (schemas: ReportingExporterSchema[]): void => {
-        this.setExporterTypeOptions(schemas);
-        this.createExporterControls(schemas);
+    this.loadFormConfig(this.getExportersSchemas(), (schemas: ReportingExporterSchema[]) => {
+      // Idempotent, as `loadFormConfig` requires: `addControl` keeps an already-registered control,
+      // and the schema-derived collections below are rebuilt by assignment rather than appended to.
+      this.setExporterTypeOptions(schemas);
+      this.createExporterControls(schemas);
 
-        if (this.editingExporter) {
-          this.form.patchValue({
-            ...this.editingExporter,
-            type: this.editingExporter.attributes['exporter_type'] as string,
-          });
-        }
+      if (this.editingExporter) {
+        this.form.patchValue({
+          ...this.editingExporter,
+          type: this.editingExporter.attributes['exporter_type'] as string,
+        });
+      }
 
-        this.isLoading.set(false);
-        this.isLoadingSchemas.set(false);
-      },
-      error: (error: unknown) => {
-        this.errorHandler.showErrorModal(error);
-        this.isLoading.set(false);
-        this.isLoadingSchemas.set(false);
-      },
+      this.schemasLoaded.set(true);
     });
   }
 
@@ -154,7 +179,7 @@ export class ReportingExportersFormComponent implements OnInit {
   }
 
   private setExporterTypeOptions(schemas: ReportingExporterSchema[]): void {
-    this.exporterTypeOptions$ = of(
+    this.exporterTypeOptions.set(
       schemas.map((schema) => ({
         label: ignoreTranslation(schema.key),
         value: schema.key,
@@ -164,10 +189,10 @@ export class ReportingExportersFormComponent implements OnInit {
 
   private createExporterControls(schemas: ReportingExporterSchema[]): void {
     for (const schema of schemas) {
-      for (const input of schema.schema) {
+      for (const field of schema.schema) {
         this.form.controls.attributes.addControl(
-          input._name_,
-          new FormControl(input.const || '', input._required_ ? [Validators.required] : []),
+          field._name_,
+          new FormControl(field.const || '', field._required_ ? [Validators.required] : []),
         );
       }
     }
@@ -184,14 +209,14 @@ export class ReportingExportersFormComponent implements OnInit {
     this.onExporterTypeChanged(null);
   }
 
-  protected parseSchemaForDynamicSchema(schema: ReportingExporterSchema): DynamicFormSchemaNode[] {
+  private parseSchemaForDynamicSchema(schema: ReportingExporterSchema): DynamicFormSchemaNode[] {
     return schema.schema
-      .filter((input) => !input.const)
-      .map((input) => getDynamicFormSchemaNode(input));
+      .filter((field) => !field.const)
+      .map((field) => getDynamicFormSchemaNode(field));
   }
 
   private parseSchemaForExporterList(schema: ReportingExporterSchema): ReportingExporterList {
-    const variables = schema.schema.map((input) => input._name_);
+    const variables = schema.schema.map((field) => field._name_);
     return { key: schema.key, variables };
   }
 
@@ -217,43 +242,5 @@ export class ReportingExportersFormComponent implements OnInit {
         });
       }
     }
-  }
-
-  protected onSubmit(): void {
-    const values = {
-      ...this.form.value,
-    };
-
-    values.attributes['exporter_type'] = values.type;
-    delete values.type;
-
-    for (const [key, value] of Object.entries(values.attributes)) {
-      if (value == null || value === '') {
-        delete values.attributes[key];
-      }
-    }
-
-    this.isLoading.set(true);
-    let request$: Observable<unknown>;
-
-    if (this.editingExporter) {
-      request$ = this.api.call('reporting.exporters.update', [
-        this.editingExporter.id,
-        values,
-      ]);
-    } else {
-      request$ = this.api.call('reporting.exporters.create', [values]);
-    }
-
-    request$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: () => {
-        this.isLoading.set(false);
-        this.slideInRef.close({ response: true });
-      },
-      error: (error: unknown) => {
-        this.isLoading.set(false);
-        this.formErrorHandler.handleValidationErrors(error, this.form);
-      },
-    });
   }
 }

@@ -1,5 +1,6 @@
-import { MatDialog, MatDialogRef } from '@angular/material/dialog';
+import { DialogRef } from '@angular/cdk/dialog';
 import { createServiceFactory, mockProvider, SpectatorService } from '@ngneat/spectator/jest';
+import { TnDialog } from '@truenas/ui-components';
 import {
   BehaviorSubject, firstValueFrom, of,
 } from 'rxjs';
@@ -70,9 +71,9 @@ describe('PoolManagerStore', () => {
         selectableDisks$: of(disks),
         hasSedCapableDisks$: of(false),
       }),
-      mockProvider(MatDialog, {
+      mockProvider(TnDialog, {
         open: jest.fn(() => ({
-          afterClosed: jest.fn(() => of(dialogReturnValue)),
+          closed: of(dialogReturnValue),
         })),
       }),
       GenerateVdevsService,
@@ -154,10 +155,9 @@ describe('PoolManagerStore', () => {
   });
 
   describe('methods - options', () => {
-    it('setGeneralOptions - sets options such as name and encryption', async () => {
+    it('setGeneralOptions - sets options such as name', async () => {
       const generalOptions = {
         name: 'tank',
-        encryption: 'AES-128',
         nameErrors: null,
       } as PoolManagerState;
       spectator.service.setGeneralOptions(generalOptions);
@@ -165,7 +165,6 @@ describe('PoolManagerStore', () => {
       expect(await firstValueFrom(spectator.service.state$)).toMatchObject({
         ...initialState,
         name: generalOptions.name,
-        encryption: generalOptions.encryption,
         nameErrors: null,
       });
     });
@@ -259,6 +258,24 @@ describe('PoolManagerStore', () => {
       expect(await firstValueFrom(spectator.service.state$)).toMatchObject({ topology: initialState.topology });
     });
 
+    it('setTopologyCategoryLayout – keeps configured dedicated spares when switching the data layout to dRAID', async () => {
+      const spareVdevs = [[{ devname: 'sda' }]] as DetailsDisk[][];
+      spectator.service.setManualTopologyCategory(VDevType.Spare, spareVdevs);
+
+      spectator.service.setTopologyCategoryLayout(VDevType.Data, CreateVdevLayout.Draid1);
+
+      let state = await firstValueFrom(spectator.service.state$);
+      expect(state.topology[VDevType.Data].layout).toBe(CreateVdevLayout.Draid1);
+      expect(state.topology[VDevType.Spare].vdevs).toEqual(spareVdevs);
+
+      // Changing the dRAID parity must not discard already-configured spares.
+      spectator.service.setTopologyCategoryLayout(VDevType.Data, CreateVdevLayout.Draid2);
+
+      state = await firstValueFrom(spectator.service.state$);
+      expect(state.topology[VDevType.Data].layout).toBe(CreateVdevLayout.Draid2);
+      expect(state.topology[VDevType.Spare].vdevs).toEqual(spareVdevs);
+    });
+
     it('resetTopology – completely resets pool topology', async () => {
       spectator.service.setManualTopologyCategory(VDevType.Data, [{}] as DetailsDisk[][]);
       spectator.service.setManualTopologyCategory(VDevType.Log, [{}] as DetailsDisk[][]);
@@ -294,7 +311,7 @@ describe('PoolManagerStore', () => {
       jest.spyOn(spectator.service, 'setManualTopologyCategory');
       spectator.service.openManualSelectionDialog(VDevType.Data);
 
-      expect(spectator.inject(MatDialog).open).toHaveBeenCalledWith(ManualDiskSelectionComponent, {
+      expect(spectator.inject(TnDialog).open).toHaveBeenCalledWith(ManualDiskSelectionComponent, {
         data: {
           enclosures,
           inventory: [expect.objectContaining({ devname: 'sdb' })],
@@ -313,11 +330,11 @@ describe('PoolManagerStore', () => {
     it('resets layout when manual selection dialog results in no vdevs', () => {
       dialogReturnValue = [];
       jest.spyOn(spectator.service, 'resetTopologyCategory');
-      const openFnSpy = jest.spyOn(spectator.inject(MatDialog), 'open');
+      const openFnSpy = jest.spyOn(spectator.inject(TnDialog), 'open');
       openFnSpy.mockImplementation(() => {
         return {
-          afterClosed: () => of([]),
-        } as MatDialogRef<unknown>;
+          closed: of([]),
+        } as DialogRef;
       });
       spectator.service.openManualSelectionDialog(VDevType.Data);
       expect(spectator.service.resetTopologyCategory).toHaveBeenCalledWith(VDevType.Data);
@@ -326,43 +343,49 @@ describe('PoolManagerStore', () => {
 
   describe('SED encryption', () => {
     describe('setEncryptionOptions', () => {
-      it('sets encryption type, encryption algorithm, and SED password', async () => {
+      it('sets encryption type and SED password', async () => {
         spectator.service.setEncryptionOptions({
           encryptionType: EncryptionType.Sed,
-          encryption: null,
           sedPassword: 'mypassword',
         });
 
         const state = await firstValueFrom(spectator.service.state$);
         expect(state.encryptionType).toBe(EncryptionType.Sed);
-        expect(state.encryption).toBeNull();
         expect(state.sedPassword).toBe('mypassword');
       });
 
-      it('sets software encryption with algorithm', async () => {
+      it('sets software encryption', async () => {
         spectator.service.setEncryptionOptions({
           encryptionType: EncryptionType.Software,
-          encryption: 'AES-256-GCM',
           sedPassword: null,
         });
 
         const state = await firstValueFrom(spectator.service.state$);
         expect(state.encryptionType).toBe(EncryptionType.Software);
-        expect(state.encryption).toBe('AES-256-GCM');
         expect(state.sedPassword).toBeNull();
       });
 
       it('sets no encryption', async () => {
         spectator.service.setEncryptionOptions({
           encryptionType: EncryptionType.None,
-          encryption: null,
           sedPassword: null,
         });
 
         const state = await firstValueFrom(spectator.service.state$);
         expect(state.encryptionType).toBe(EncryptionType.None);
-        expect(state.encryption).toBeNull();
         expect(state.sedPassword).toBeNull();
+      });
+
+      it('resets topology categories holding non-SED-capable disks when switching to SED', async () => {
+        spectator.service.setManualTopologyCategory(VDevType.Data, [[disks[0]]]);
+
+        spectator.service.setEncryptionOptions({
+          encryptionType: EncryptionType.Sed,
+          sedPassword: 'mypassword',
+        });
+
+        const state = await firstValueFrom(spectator.service.state$);
+        expect(state.topology[VDevType.Data].vdevs).toEqual([]);
       });
     });
 
@@ -386,7 +409,6 @@ describe('PoolManagerStore', () => {
       it('encryptionType$ - returns encryption type', async () => {
         spectator.service.setEncryptionOptions({
           encryptionType: EncryptionType.Sed,
-          encryption: null,
           sedPassword: 'password',
         });
 
@@ -396,7 +418,6 @@ describe('PoolManagerStore', () => {
       it('sedPassword$ - returns SED password', async () => {
         spectator.service.setEncryptionOptions({
           encryptionType: EncryptionType.Sed,
-          encryption: null,
           sedPassword: 'mypassword',
         });
 

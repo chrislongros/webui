@@ -1,9 +1,9 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import {
   createComponentFactory, Spectator, mockProvider, byText,
 } from '@ngneat/spectator/jest';
+import { TnButtonHarness } from '@truenas/ui-components';
 import { NgxSkeletonLoaderModule } from 'ngx-skeleton-loader';
 import { DiskBus } from 'app/enums/disk-bus.enum';
 import { DiskPowerLevel } from 'app/enums/disk-power-level.enum';
@@ -68,11 +68,12 @@ describe('DiskHealthCardComponent', () => {
     loader = TestbedHarnessEnvironment.loader(spectator.fixture);
   });
 
-  it('shows a button to manage all disks', async () => {
-    const manageDisksButton = await loader.getHarness(MatButtonHarness.with({ text: 'View Disks' }));
+  it('links to the disks page under its legacy link-* test id', async () => {
+    const manageDisksButton = await loader.getHarness(TnButtonHarness.with({ label: 'View Disks' }));
 
-    expect(manageDisksButton).toBeTruthy();
-    expect(await (await manageDisksButton.host()).getAttribute('href')).toBe('/storage/disks');
+    expect(await manageDisksButton.getHref()).toBe('/storage/disks');
+    // Id is host-pinned, not passed through `[testId]` — see the note in the template.
+    expect(spectator.query('[data-test="link-view-disks"]')).toExist();
   });
 
   describe('Temperatures', () => {
@@ -94,6 +95,49 @@ describe('DiskHealthCardComponent', () => {
     it('shows average temperature', () => {
       const detailsItem = spectator.query(byText('Average Disk Temperature:'))!.parentElement!;
       expect(detailsItem.querySelector('.value')).toHaveText('30 °C');
+    });
+
+    it('ignores devices without SMART temperature values when aggregating', () => {
+      spectator.setInput('disks', [
+        ...disks,
+        {
+          ...disks[0],
+          devname: 'pmem0',
+          name: 'pmem0',
+          tempAggregates: { min: null, max: null, avg: null },
+        } as StorageDashboardDisk,
+      ]);
+
+      expect(spectator.query(byText('Highest Temperature:'))!.parentElement!.querySelector('.value'))
+        .toHaveText('50 °C');
+      expect(spectator.query(byText('Lowest Temperature:'))!.parentElement!.querySelector('.value'))
+        .toHaveText('10 °C');
+      expect(spectator.query(byText('Average Disk Temperature:'))!.parentElement!.querySelector('.value'))
+        .toHaveText('30 °C');
+      expect(spectator.query(byText('No disk temperature is available.'))).toBeNull();
+    });
+
+    it('recomputes extremes without retaining stale values when disks input changes', () => {
+      spectator.setInput('disks', [
+        {
+          ...disks[0], devname: 'sda', name: 'sda', tempAggregates: { min: 10, max: 50, avg: 30 },
+        },
+        {
+          ...disks[0], devname: 'sdb', name: 'sdb', tempAggregates: { min: 20, max: 40, avg: 30 },
+        },
+      ] as StorageDashboardDisk[]);
+
+      // Remove the disk holding both extremes (10/50) — the panel must reflect the survivor (20/40).
+      spectator.setInput('disks', [
+        {
+          ...disks[0], devname: 'sdb', name: 'sdb', tempAggregates: { min: 20, max: 40, avg: 30 },
+        },
+      ] as StorageDashboardDisk[]);
+
+      expect(spectator.query(byText('Highest Temperature:'))!.parentElement!.querySelector('.value'))
+        .toHaveText('40 °C');
+      expect(spectator.query(byText('Lowest Temperature:'))!.parentElement!.querySelector('.value'))
+        .toHaveText('20 °C');
     });
   });
 });

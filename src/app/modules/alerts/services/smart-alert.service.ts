@@ -3,14 +3,18 @@ import { Injectable, inject, isDevMode } from '@angular/core';
 import { NavigationStart, Router } from '@angular/router';
 import { TranslateService } from '@ngx-translate/core';
 import {
-  distinctUntilChanged, filter, first, switchMap, takeUntil, tap, timeout,
+  distinctUntilChanged, filter, first, from, of, switchMap, takeUntil, tap, timeout,
 } from 'rxjs';
 import { AlertLevel } from 'app/enums/alert-level.enum';
 import { JobState } from 'app/enums/job-state.enum';
+import { stripQueryAndFragment } from 'app/helpers/url.helper';
 import { Alert } from 'app/interfaces/alert.interface';
-import { EnhancedAlert, SmartAlertAction, SmartAlertActionType, SmartAlertCategory } from 'app/interfaces/smart-alert.interface';
+import {
+  EnhanceAlertOptions, EnhancedAlert, SmartAlertAction, SmartAlertActionType, SmartAlertCategory,
+} from 'app/interfaces/smart-alert.interface';
 import { isRoutePlaceholder, routePlaceholders } from 'app/modules/alerts/constants/route-placeholders.const';
 import { criticalLevels } from 'app/modules/alerts/store/alert.selectors';
+import { getAlertBadgeMenuPaths } from 'app/modules/alerts/utils/alert-menu-path.utils';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { searchDelayConst } from 'app/modules/global-search/constants/delay.const';
 import { UiSearchDirectivesService } from 'app/modules/global-search/services/ui-search-directives.service';
@@ -46,7 +50,8 @@ export class SmartAlertService {
   /**
    * Enhances a basic alert with smart actions, contextual help, and metadata
    */
-  enhanceAlert(alert: Alert): Alert & EnhancedAlert {
+  enhanceAlert(alert: Alert, options: EnhanceAlertOptions = {}): Alert & EnhancedAlert {
+    const isConsolidated = Boolean(options.isConsolidated);
     const enhancement = getAlertEnhancement(
       alert.source,
       alert.klass,
@@ -66,8 +71,13 @@ export class SmartAlertService {
     const extractedFragment = enhancement.extractFragment?.(alertMessage);
 
     // Filter out navigation actions that would navigate to the current page
-    const currentUrl = this.router.url.split('?')[0].split('#')[0]; // Remove query params and fragments
+    const currentUrl = stripQueryAndFragment(this.router.url);
     const filteredActions = enhancement.actions?.filter((action) => {
+      // A consolidated entry stands for several objects, so a task rerun resolved from one
+      // alert's args would silently act on that one alert only.
+      if (isConsolidated && action.type === SmartAlertActionType.RunTask) {
+        return false;
+      }
       if (action.type === SmartAlertActionType.Navigate && action.route) {
         const targetUrl = '/' + action.route.join('/');
         return targetUrl !== currentUrl;
@@ -83,11 +93,18 @@ export class SmartAlertService {
     });
 
     // Bind handlers to actions and inject extracted fragment/apiParams
-    const boundActions = filteredActions?.map((action) => {
+    const boundActions = filteredActions?.map((action): SmartAlertAction | null => {
       let enhancedAction = { ...action };
 
-      // Inject extracted fragment for navigation actions
-      if (action.type === SmartAlertActionType.Navigate && extractedFragment && !action.fragment) {
+      // A route resolved from one alert's args points at that alert's object, so it is
+      // wrong for an entry that stands for several of them.
+      if (isConsolidated && action.type === SmartAlertActionType.Navigate && action.route?.some(isRoutePlaceholder)) {
+        return null;
+      }
+
+      // Inject extracted fragment for navigation actions. Skipped for consolidated entries:
+      // the highlight would single out the representative alert's object.
+      if (action.type === SmartAlertActionType.Navigate && extractedFragment && !action.fragment && !isConsolidated) {
         enhancedAction = { ...enhancedAction, fragment: extractedFragment };
       }
 
@@ -137,16 +154,19 @@ export class SmartAlertService {
         ...enhancedAction,
         handler: this.createActionHandler(enhancedAction, alert),
       };
-    });
+    }).filter((action): action is SmartAlertAction => action !== null);
 
     return {
       ...alert,
       category: enhancement.category,
       actions: boundActions,
+      groupSummary: enhancement.groupSummary,
       contextualHelp: enhancement.contextualHelp,
       detailedHelp: enhancement.detailedHelp,
       documentationUrl: enhancement.documentationUrl,
       relatedMenuPath: enhancement.relatedMenuPath,
+      bannerMenuPath: enhancement.bannerMenuPath,
+      extraMenuPaths: enhancement.extraMenuPaths,
       customIcon: enhancement.customIcon,
       severityScore: enhancement.severityScore,
     };
@@ -161,7 +181,7 @@ export class SmartAlertService {
         case SmartAlertActionType.Navigate:
           if (action.route) {
             const targetUrl = ('/' + action.route.join('/')).replace(/\/+/g, '/'); // Normalize multiple slashes
-            const currentUrl = this.router.url.split('?')[0].split('#')[0];
+            const currentUrl = stripQueryAndFragment(this.router.url);
             const isAlreadyOnPage = targetUrl === currentUrl;
 
             // Use UiSearch system when fragment is present for highlighting
@@ -262,12 +282,17 @@ export class SmartAlertService {
     const taskName = this.extractTaskName(alert);
     const confirmationMessage = this.translate.instant('Run «{name}» now?', { name: taskName });
     const relatedRoute = this.getRelatedRouteForAlert(alert);
+    const currentUrl = stripQueryAndFragment(this.router.url);
+    const navigation$ = relatedRoute && currentUrl !== relatedRoute
+      ? from(this.router.navigateByUrl(relatedRoute))
+      : of(true);
 
-    this.dialogService.confirm({
-      title: this.translate.instant('Run Now'),
-      message: confirmationMessage,
-      hideCheckbox: true,
-    }).pipe(
+    navigation$.pipe(
+      switchMap(() => this.dialogService.confirm({
+        title: this.translate.instant('Run Now'),
+        message: confirmationMessage,
+        hideCheckbox: true,
+      })),
       filter(Boolean),
       switchMap(() => {
         // Extract task ID from apiParams (should be the task ID)
@@ -317,8 +342,11 @@ export class SmartAlertService {
       alert.formatted || alert.text,
       alert, // Pass full alert for conditional enhancement resolution
     );
-    if (enhancement?.relatedMenuPath) {
-      return '/' + enhancement.relatedMenuPath.join('/');
+    // Prefer the banner scope (where the alert's data actually lives) so the page is refreshed
+    // on the correct route, falling back to the nav-badge path when no banner override is set.
+    const menuPath = enhancement?.bannerMenuPath ?? enhancement?.relatedMenuPath;
+    if (menuPath) {
+      return '/' + menuPath.join('/');
     }
     return null;
   }
@@ -331,7 +359,7 @@ export class SmartAlertService {
       return;
     }
 
-    const currentUrl = this.router.url.split('?')[0].split('#')[0];
+    const currentUrl = stripQueryAndFragment(this.router.url);
     if (currentUrl === relatedRoute) {
       // User is on the task page, reload the route to refresh the data
       // This uses the "navigate away and back" pattern which is necessary because:
@@ -386,6 +414,9 @@ export class SmartAlertService {
    * Example: alert with path ['data-protection', 'cloud-backup']
    * increments counts for both 'data-protection' and 'data-protection.cloud-backup'
    *
+   * Alerts that declare `extraMenuPaths` are counted under those paths too, so an
+   * alert spanning two feature areas badges both (e.g. tiering: Storage + Datasets).
+   *
    * Counts all alert instances to match what users see in the alert panel.
    * For example, if there are 2 instances of the same alert, it counts as 2.
    */
@@ -396,10 +427,10 @@ export class SmartAlertService {
 
     // Count all alert instances by path
     alerts
-      .filter((alert) => !alert.dismissed && alert.relatedMenuPath)
+      .filter((alert) => !alert.dismissed)
       .forEach((alert) => {
-        const menuPath = alert.relatedMenuPath;
-        if (!menuPath) return;
+        const menuPaths = getAlertBadgeMenuPaths(alert);
+        if (!menuPaths.length) return;
 
         const isCritical = criticalLevels.includes(alert.level);
         const isWarning = [AlertLevel.Warning].includes(alert.level);
@@ -409,21 +440,27 @@ export class SmartAlertService {
         // Example: ['data-protection', 'cloud-backup'] creates entries for:
         // - 'data-protection'
         // - 'data-protection.cloud-backup'
-        for (let i = 1; i <= menuPath.length; i++) {
-          const pathSegments = menuPath.slice(0, i);
-          const path = pathSegments.join('.');
-          const current = counts.get(path) || { critical: 0, warning: 0, info: 0 };
+        const countedPaths = new Set<string>();
+        menuPaths.forEach((menuPath) => {
+          for (let i = 1; i <= menuPath.length; i++) {
+            const path = menuPath.slice(0, i).join('.');
+            // A path shared by two of the alert's menu paths must only be counted once.
+            if (countedPaths.has(path)) continue;
+            countedPaths.add(path);
 
-          if (isCritical) {
-            current.critical++;
-          } else if (isWarning) {
-            current.warning++;
-          } else if (isInfo) {
-            current.info++;
+            const current = counts.get(path) || { critical: 0, warning: 0, info: 0 };
+
+            if (isCritical) {
+              current.critical++;
+            } else if (isWarning) {
+              current.warning++;
+            } else if (isInfo) {
+              current.info++;
+            }
+
+            counts.set(path, current);
           }
-
-          counts.set(path, current);
-        }
+        });
       });
 
     return counts;

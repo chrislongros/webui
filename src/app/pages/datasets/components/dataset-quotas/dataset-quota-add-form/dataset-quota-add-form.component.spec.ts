@@ -1,17 +1,16 @@
 import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { ReactiveFormsModule } from '@angular/forms';
-import { MatButtonHarness } from '@angular/material/button/testing';
 import { createComponentFactory, mockProvider, Spectator } from '@ngneat/spectator/jest';
+import { TnInputHarness } from '@truenas/ui-components';
 import { of } from 'rxjs';
 import { mockCall, mockApi } from 'app/core/testing/utils/mock-api.utils';
 import { mockAuth } from 'app/core/testing/utils/mock-auth.utils';
 import { DatasetQuotaType } from 'app/enums/dataset.enum';
 import { DialogService } from 'app/modules/dialog/dialog.service';
 import { IxChipsHarness } from 'app/modules/forms/ix-forms/components/ix-chips/ix-chips.harness';
+import { ixFormTestingProviders } from 'app/modules/forms/ix-forms/testing/ix-form-testing.helpers';
 import { IxFormHarness } from 'app/modules/forms/ix-forms/testing/ix-form.harness';
-import { SlideIn } from 'app/modules/slide-ins/slide-in';
-import { SlideInRef } from 'app/modules/slide-ins/slide-in-ref';
 import { ApiService } from 'app/modules/websocket/api.service';
 import { DatasetQuotaAddFormComponent } from 'app/pages/datasets/components/dataset-quotas/dataset-quota-add-form/dataset-quota-add-form.component';
 import { UserService } from 'app/services/user.service';
@@ -21,11 +20,9 @@ describe('DatasetQuotaAddFormComponent', () => {
   let loader: HarnessLoader;
   let api: ApiService;
 
-  const slideInRef: SlideInRef<{ quotaType: DatasetQuotaType; datasetId: string } | undefined, unknown> = {
-    close: jest.fn(),
-    requireConfirmationWhen: jest.fn(),
-    getData: jest.fn((): undefined => undefined),
-  };
+  const getTnInput = (name: string): Promise<TnInputHarness> => loader.getHarness(
+    TnInputHarness.with({ selector: `[formControlName="${name}"]` }),
+  );
 
   const createComponent = createComponentFactory({
     component: DatasetQuotaAddFormComponent,
@@ -69,9 +66,8 @@ describe('DatasetQuotaAddFormComponent', () => {
           return of(null);
         }),
       }),
-      mockProvider(SlideIn),
       mockProvider(DialogService),
-      mockProvider(SlideInRef, slideInRef),
+      ...ixFormTestingProviders(),
       mockAuth(),
     ],
   });
@@ -79,9 +75,10 @@ describe('DatasetQuotaAddFormComponent', () => {
   describe('adding user quotas', () => {
     beforeEach(() => {
       spectator = createComponent({
-        providers: [
-          mockProvider(SlideInRef, { ...slideInRef, getData: jest.fn(() => ({ quotaType: DatasetQuotaType.User, datasetId: 'my-dataset' })) }),
-        ],
+        props: {
+          quotaType: DatasetQuotaType.User,
+          datasetId: 'my-dataset',
+        },
       });
       api = spectator.inject(ApiService);
       loader = TestbedHarnessEnvironment.loader(spectator.fixture);
@@ -89,17 +86,15 @@ describe('DatasetQuotaAddFormComponent', () => {
 
     it('adds user quotas when form is submitted', async () => {
       const form = await loader.getHarness(IxFormHarness);
-
-      await form.fillForm({
-        'User Data Quota (Examples: 500 KiB, 500M, 2 TB)': '500M',
-        'User Object Quota': 2000,
-      });
+      await (await getTnInput('data_quota')).setValue('500M');
+      await (await getTnInput('obj_quota')).setValue('2000');
 
       const usersInput = await form.getControl('Apply To Users') as IxChipsHarness;
       await usersInput.selectSuggestionValue('john');
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      const closed = jest.fn();
+      spectator.component.closed.subscribe(closed);
+      spectator.component.submit();
 
       expect(api.call).toHaveBeenCalledWith('pool.dataset.set_quota', [
         'my-dataset',
@@ -108,16 +103,17 @@ describe('DatasetQuotaAddFormComponent', () => {
           { id: 'john', quota_type: DatasetQuotaType.UserObj, quota_value: 2000 },
         ],
       ]);
-      expect(spectator.inject(SlideInRef).close).toHaveBeenCalled();
+      expect(closed).toHaveBeenCalledWith(true);
     });
   });
 
   describe('adding group quotas', () => {
     beforeEach(() => {
       spectator = createComponent({
-        providers: [
-          mockProvider(SlideInRef, { ...slideInRef, getData: jest.fn(() => ({ quotaType: DatasetQuotaType.Group, datasetId: 'my-dataset' })) }),
-        ],
+        props: {
+          quotaType: DatasetQuotaType.Group,
+          datasetId: 'my-dataset',
+        },
       });
       api = spectator.inject(ApiService);
       loader = TestbedHarnessEnvironment.loader(spectator.fixture);
@@ -126,13 +122,13 @@ describe('DatasetQuotaAddFormComponent', () => {
     it('adds group quotas when form is submitted', async () => {
       const form = await loader.getHarness(IxFormHarness);
       await form.fillForm({
-        'Group Data Quota (Examples: 500 KiB, 500M, 2 TB)': '500M',
-        'Group Object Quota': 2000,
         'Apply To Groups': ['sys', 'bin'],
       });
 
-      const saveButton = await loader.getHarness(MatButtonHarness.with({ text: 'Save' }));
-      await saveButton.click();
+      await (await getTnInput('data_quota')).setValue('500M');
+      await (await getTnInput('obj_quota')).setValue('2000');
+
+      spectator.component.submit();
 
       expect(api.call).toHaveBeenCalledWith('pool.dataset.set_quota', [
         'my-dataset',
@@ -143,7 +139,6 @@ describe('DatasetQuotaAddFormComponent', () => {
           { id: 'bin', quota_type: DatasetQuotaType.GroupObj, quota_value: 2000 },
         ],
       ]);
-      expect(spectator.inject(SlideInRef).close).toHaveBeenCalled();
     });
   });
 });

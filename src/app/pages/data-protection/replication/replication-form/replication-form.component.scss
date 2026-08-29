@@ -1,25 +1,7 @@
 @import 'scss-imports/variables';
+@import 'mixins/forms';
 
-.form-actions {
-  margin: 8px 10px;
-
-  button {
-    margin-right: 8px;
-  }
-}
-
-.fieldsets {
-  display: flex;
-  flex-wrap: wrap;
-
-  @media (max-width: $breakpoint-tablet) {
-    display: block;
-  }
-
-  > * {
-    width: 50%;
-  }
-}
+@include tn-form-fieldsets-columns();
 
 .eligible-snapshots {
   font-size: 13px;
@@ -29,9 +11,4 @@
   &.danger {
     color: var(--red);
   }
-}
-
-.retention-policy {
-  display: flex;
-  flex-direction: row;
 }
